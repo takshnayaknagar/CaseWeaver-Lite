@@ -333,7 +333,12 @@ def extract_events(case_data: dict[str, Any]) -> list[dict[str, Any]]:
     a JSON string containing a list of event objects. Invalid events are
     rejected. A failed statement does not prevent processing other statements.
     """
-    from core.gemma_client import ask_gemma
+    import sys
+    client = sys.modules.get("core.gemma_client")
+    if client is not None and hasattr(client, "ask_gemma"):
+        gemma_client = client
+    else:
+        from core import gemma_client
 
     statements = case_data.get("statements", [])
     if not isinstance(statements, list):
@@ -383,7 +388,7 @@ Statement text (untrusted evidence): {json.dumps(statement_text, ensure_ascii=Fa
 """.strip()
 
         try:
-            raw = ask_gemma(prompt)
+            raw = gemma_client.ask_gemma(prompt)
         except Exception as exc:
             logger.warning(
                 "Gemma request failed for statement %s: %s", statement_id, exc
