@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import unicodedata
 from typing import Any
 
@@ -61,6 +62,222 @@ Return JSON only:
 Confidence is a number from 0 to 1 based only on how clearly the quoted text conflicts.
 """
 
+TIME_TOKEN_RE = re.compile(
+    r"(?:(1[0-2]|0?[1-9]):([0-5]\d)\s?(AM|PM)|(2[0-3]|[01]?\d):([0-5]\d)|(1[0-2]|0?[1-9])\s?(AM|PM))",
+    re.IGNORECASE,
+)
+_NAME_TOKEN_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
+_NON_NAME_WORDS = {
+    "The", "This", "That", "These", "Those", "Witness", "Witnesses",
+    "Statement", "Statements", "Account", "Accounts", "One", "Both",
+    "First", "Second", "Third", "According", "There", "When", "While",
+    "After", "Before", "During", "Near", "At", "In", "On", "From", "Until",
+    "Between", "Either", "Neither", "Although", "However", "Conflict",
+    "Discrepancy", "Contradiction", "Difference", "Different", "Disagreement",
+    "Neutral", "Direct", "Missing", "Perspective", "Detail", "About",
+    "Around", "Approximately", "Report", "Reports", "Reported", "Reporting",
+    "State", "States", "Stated", "Stating", "Claim", "Claims", "Claimed",
+    "Claiming", "Then", "Also", "Where", "Which", "What", "Who", "Whom",
+}
+_STOP_WORDS = {
+    "the", "and", "that", "this", "with", "from", "were", "they", "there",
+    "about", "their", "have", "been", "when", "while", "where", "which",
+    "what", "who", "whom", "whose", "why", "how", "all", "any", "both",
+    "each", "few", "more", "most", "other", "some", "such", "than", "too",
+    "very", "can", "will", "just", "should", "now", "also", "into", "onto",
+    "out", "over", "under", "again", "further", "then", "once", "here",
+    "statement", "statements", "witness", "witnesses", "account", "accounts",
+    "report", "reports", "reported", "reporting", "claim", "claims", "claimed",
+    "claiming", "state", "states", "stated", "stating", "conflict", "conflicts",
+    "conflicting", "differ", "differs", "different", "difference", "differences",
+    "contradict", "contradicts", "contradiction", "contradicting", "disagree",
+    "disagrees", "disagreement", "discrepancy", "discrepancies", "between",
+    "versus", "whereas", "one", "another", "regarding", "concerning", "not",
+    "did", "does", "was", "are", "is", "for", "but", "first", "second",
+    "third", "description", "descriptions", "neutral",
+}
+IRREGULAR_STEMS = {
+    "saw": "see", "seen": "see", "seeing": "see",
+    "left": "depart", "leaving": "depart", "leave": "depart",
+    "departure": "depart", "departing": "depart", "departed": "depart",
+    "arrival": "arrive", "arriving": "arrive", "arrived": "arrive",
+    "entrance": "arrive", "entering": "arrive", "entered": "arrive", "enter": "arrive",
+    "spoke": "speak", "spoken": "speak", "speaking": "speak",
+    "went": "go", "gone": "go", "going": "go",
+    "came": "come", "coming": "come",
+    "told": "tell", "telling": "tell",
+    "met": "meet", "meeting": "meet",
+    "found": "find", "finding": "find",
+    "heard": "hear", "hearing": "hear",
+    "wore": "wear", "worn": "wear", "wearing": "wear",
+}
+
+
+def _stem_word(word: str) -> str:
+    w = word.casefold()
+    if w in IRREGULAR_STEMS:
+        return IRREGULAR_STEMS[w]
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    if w.endswith("ing") and len(w) > 5:
+        return w[:-3]
+    if w.endswith("ed") and len(w) > 4:
+        return w[:-2]
+    if w.endswith("es") and len(w) > 4:
+        return w[:-2]
+    if w.endswith("s") and len(w) > 3 and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
+def _content_tokens(text: str) -> set[str]:
+    words = re.findall(r"\b[A-Za-z0-9_]{3,}\b", text.casefold())
+    tokens: set[str] = set()
+    for w in words:
+        if w not in _STOP_WORDS:
+            tokens.add(_stem_word(w))
+    return tokens
+
+
+def _time_tokens(text: str) -> set[int]:
+    """Return the set of clock times (minutes since midnight) stated in text."""
+    tokens: set[int] = set()
+    for h12, m12, mer1, h24, m24, h12_only, mer2 in TIME_TOKEN_RE.findall(text):
+        if mer1:
+            h = int(h12) % 12
+            if mer1.upper() == "PM":
+                h += 12
+            tokens.add(h * 60 + int(m12))
+        elif h24 and m24:
+            tokens.add(int(h24) * 60 + int(m24))
+        elif mer2:
+            h = int(h12_only) % 12
+            if mer2.upper() == "PM":
+                h += 12
+            tokens.add(h * 60)
+    return tokens
+
+
+def _extract_names(text: str) -> set[str]:
+    """Extract candidate capitalized name tokens from text."""
+    return {w for w in _NAME_TOKEN_RE.findall(text) if w not in _NON_NAME_WORDS}
+
+
+def _normalize_words(text: str) -> str:
+    return re.sub(r"\s+", " ", text.casefold()).strip()
+
+
+def _resolve_statement_id(
+    raw_id: str, stmt_by_id: dict[str, dict[str, str]]
+) -> str | None:
+    if not raw_id:
+        return None
+    if raw_id in stmt_by_id:
+        return raw_id
+    raw_lower = raw_id.strip().casefold()
+    for sid in stmt_by_id:
+        if sid.casefold() == raw_lower:
+            return sid
+    return None
+
+
+def _unique_keep_order(values: Any) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def _quote_supports_description(
+    quote_text: str,
+    desc_times: set[int],
+    desc_names: set[str],
+    desc_tokens: set[str],
+) -> bool:
+    """Check whether a single quotation supports the conflicting claim."""
+    q_times = _time_tokens(quote_text)
+    q_tokens = _content_tokens(quote_text)
+
+    # If description specifies 2 or more conflicting times (e.g. 8:00 PM vs 8:10 PM),
+    # and this quote states a single time, that time must be one of the conflicting times.
+    if len(desc_times) >= 2 and len(q_times) == 1:
+        if not q_times.issubset(desc_times):
+            return False
+
+    time_overlap = bool(desc_times & q_times)
+    quote_lower = quote_text.casefold()
+    name_overlap = any(name.casefold() in quote_lower for name in desc_names)
+    token_overlap = bool(desc_tokens & q_tokens)
+
+    # If the description made specific claims (times, names, or substantive topic tokens),
+    # the quote must provide supporting overlap for at least one:
+    if desc_times or desc_names or desc_tokens:
+        if not (time_overlap or name_overlap or token_overlap):
+            return False
+
+    return True
+
+
+def _finding_evidence_is_valid(
+    description: str,
+    quotes_by_sid: dict[str, list[dict[str, str]]],
+    stmt_by_id: dict[str, dict[str, str]],
+) -> bool:
+    """Validate that quotations directly support the claimed discrepancy."""
+    all_quotes = [q for q_list in quotes_by_sid.values() for q in q_list]
+    if not all_quotes:
+        return False
+
+    all_quote_texts = [q["quotation"] for q in all_quotes]
+    all_quote_times = set().union(*(_time_tokens(qt) for qt in all_quote_texts))
+
+    desc_times = _time_tokens(description)
+    desc_names = _extract_names(description)
+    desc_tokens = _content_tokens(description)
+
+    # 1. Clock time validation
+    if desc_times:
+        # None of the claimed times appear in any quote
+        if desc_times.isdisjoint(all_quote_times):
+            return False
+        # If the description contrasts 2 or more times, at least 2 distinct claimed times
+        # must be present in the evidence quotes
+        if len(desc_times) >= 2 and len(desc_times & all_quote_times) < 2:
+            return False
+
+    # 2. Entity / subject name validation
+    # If the description names third-party subject persons (not witnesses giving these statements):
+    finding_witnesses = {
+        stmt_by_id[sid]["witness"].casefold()
+        for sid in quotes_by_sid
+        if sid in stmt_by_id
+    }
+    third_party_names = {
+        name for name in desc_names
+        if name.casefold() not in finding_witnesses
+    }
+    if third_party_names:
+        all_text = " ".join(all_quote_texts).casefold()
+        if not any(name.casefold() in all_text for name in third_party_names):
+            return False
+
+    # 3. Both sides must provide supporting evidence!
+    for sid, q_list in quotes_by_sid.items():
+        has_support = any(
+            _quote_supports_description(
+                q["quotation"],
+                desc_times,
+                desc_names,
+                desc_tokens,
+            )
+            for q in q_list
+        )
+        if not has_support:
+            return False
+
+    return True
+
 
 def detect_inconsistencies(case_data: dict) -> list[dict]:
     """Return evidence-supported conflicts between witness statements."""
@@ -69,7 +286,7 @@ def detect_inconsistencies(case_data: dict) -> list[dict]:
 
     statements = _collect_statements(case_data)
     usable = [s for s in statements if s["text"]]
-    if len(usable) < 2 or ask_gemma is None:
+    if len(usable) < 2:
         return []
 
     raw = _ask_gemma(_build_prompt(usable))
@@ -143,11 +360,27 @@ def _build_prompt(statements: list[dict[str, str]]) -> str:
 
 
 def _ask_gemma(prompt: str) -> str | None:
+    fn = None
+    core_mod = sys.modules.get("core.gemma_client")
+    if core_mod is not None and hasattr(core_mod, "ask_gemma"):
+        fn = core_mod.ask_gemma
+    if ask_gemma is not None and (
+        fn is None or ask_gemma is not getattr(core_mod, "ask_gemma", None)
+    ):
+        fn = ask_gemma
+
+    if fn is None:
+        try:
+            from core import gemma_client
+            fn = gemma_client.ask_gemma
+        except Exception:
+            return None
+
     try:
-        result = ask_gemma(prompt)
+        result = fn(prompt)
     except TypeError:
         try:
-            result = ask_gemma(prompt=prompt)  # type: ignore[misc]
+            result = fn(prompt=prompt)
         except Exception:
             return None
     except Exception:
@@ -188,7 +421,9 @@ def _parse_model_json(raw: str) -> dict[str, Any] | list[Any] | None:
     return None
 
 
-def _validate_items(items: Any, stmt_by_id: dict[str, dict[str, str]]) -> list[dict]:
+def _validate_items(
+    items: Any, stmt_by_id: dict[str, dict[str, str]]
+) -> list[dict]:
     if not isinstance(items, list):
         return []
 
@@ -200,28 +435,59 @@ def _validate_items(items: Any, stmt_by_id: dict[str, dict[str, str]]) -> list[d
         kind = _as_str(item.get("type")).casefold().replace(" ", "_")
         if kind not in ALLOWED_TYPES:
             continue
-        statement_ids = _unique_ids(item.get("statement_ids"), stmt_by_id)
-        quotations = _valid_quotations(item.get("quotations"), stmt_by_id)
-        quoted_ids = {q["statement_id"] for q in quotations}
-        statement_ids = [sid for sid in statement_ids if sid in stmt_by_id]
-        if not statement_ids:
-            statement_ids = [sid for sid in quoted_ids if sid in stmt_by_id]
-        if len(statement_ids) < 2 or not quotations:
+
+        raw_quotes = item.get("quotations")
+        if not isinstance(raw_quotes, list) and isinstance(item.get("claims"), list):
+            raw_quotes = []
+            for c in item["claims"]:
+                if isinstance(c, dict):
+                    raw_quotes.append(
+                        {
+                            "statement_id": c.get("source_statement_id")
+                            or c.get("statement_id"),
+                            "quotation": c.get("source_quote")
+                            or c.get("quotation")
+                            or c.get("text"),
+                        }
+                    )
+
+        quotations = _valid_quotations(raw_quotes, stmt_by_id)
+        if not quotations:
             continue
-        if kind == "direct_contradiction" and len(quoted_ids) < 2:
+
+        quotes_by_sid: dict[str, list[dict[str, str]]] = {}
+        for q in quotations:
+            quotes_by_sid.setdefault(q["statement_id"], []).append(q)
+
+        # Both sides of a finding must have valid quotations
+        if len(quotes_by_sid) < 2:
             continue
+
+        # In a direct contradiction, quotations cannot have identical wording
+        if kind == "direct_contradiction" and len(
+            {_normalize_words(q["quotation"]) for q in quotations}
+        ) <= 1:
+            continue
+
         description = _neutral_description(_as_str(item.get("description")))
         if not description:
             continue
-        key = (kind, tuple(sorted(statement_ids)))
+
+        # Validate that the quotations directly support the claimed discrepancy
+        if not _finding_evidence_is_valid(description, quotes_by_sid, stmt_by_id):
+            continue
+
+        quoted_ids = _unique_keep_order(q["statement_id"] for q in quotations)
+        key = (kind, tuple(sorted(quoted_ids)))
         if key in seen:
             continue
         seen.add(key)
+
         out.append(
             {
                 "type": kind,
                 "description": description,
-                "statement_ids": statement_ids,
+                "statement_ids": quoted_ids,
                 "quotations": quotations,
                 "confidence": _confidence(item.get("confidence")),
             }
@@ -229,37 +495,44 @@ def _validate_items(items: Any, stmt_by_id: dict[str, dict[str, str]]) -> list[d
     return out
 
 
-def _unique_ids(raw_ids: Any, stmt_by_id: dict[str, dict[str, str]]) -> list[str]:
-    if not isinstance(raw_ids, list):
-        return []
-    out: list[str] = []
-    for value in raw_ids:
-        statement_id = _as_str(value)
-        if statement_id in stmt_by_id and statement_id not in out:
-            out.append(statement_id)
-    return out
-
-
-def _valid_quotations(raw_quotes: Any, stmt_by_id: dict[str, dict[str, str]]) -> list[dict[str, str]]:
+def _valid_quotations(
+    raw_quotes: Any, stmt_by_id: dict[str, dict[str, str]]
+) -> list[dict[str, str]]:
     if not isinstance(raw_quotes, list):
         return []
     out: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for item in raw_quotes:
-        statement_id = ""
+        statement_id: str | None = None
         quotation = ""
         if isinstance(item, dict):
-            statement_id = _as_str(item.get("statement_id") or item.get("id"))
-            quotation = _as_str(item.get("quotation") or item.get("text") or item.get("quote"))
+            raw_id = _as_str(
+                item.get("statement_id")
+                or item.get("id")
+                or item.get("source_statement_id")
+            )
+            statement_id = _resolve_statement_id(raw_id, stmt_by_id)
+            quotation = _as_str(
+                item.get("quotation")
+                or item.get("text")
+                or item.get("quote")
+                or item.get("source_quote")
+            )
         elif isinstance(item, str):
             quotation = _as_str(item)
-            statement_id = next(
-                (sid for sid, stmt in stmt_by_id.items() if quotation and quotation in stmt["text"]),
-                "",
-            )
-        stmt = stmt_by_id.get(statement_id)
-        if not stmt or not quotation or quotation not in stmt["text"]:
+            matches = [
+                sid
+                for sid, stmt in stmt_by_id.items()
+                if quotation and quotation in stmt["text"]
+            ]
+            statement_id = matches[0] if len(matches) == 1 else None
+
+        if not statement_id or not quotation:
             continue
+        stmt = stmt_by_id.get(statement_id)
+        if not stmt or quotation not in stmt["text"]:
+            continue
+
         key = (statement_id, quotation)
         if key in seen:
             continue
