@@ -19,9 +19,10 @@ import unicodedata
 from typing import Any
 
 try:
-    from core.gemma_client import ask_gemma
+    from core.gemma_client import GemmaClientError, ask_gemma
 except ImportError:
     ask_gemma = None  # type: ignore[assignment]
+    GemmaClientError = None  # type: ignore[assignment,misc]
 
 ALLOWED_TYPES = frozenset(
     {"direct_contradiction", "missing_detail", "perspective_difference"}
@@ -210,9 +211,11 @@ def _quote_supports_description(
     name_overlap = any(name.casefold() in quote_lower for name in desc_names)
     token_overlap = bool(desc_tokens & q_tokens)
 
-    # If the description made specific claims (times, names, or substantive topic tokens),
-    # the quote must provide supporting overlap for at least one:
-    if desc_times or desc_names or desc_tokens:
+    # If the description made specific checkable claims (times or names), the
+    # quote must provide supporting overlap. A generic description with no
+    # times or names makes no specific claim beyond what the exact-substring
+    # quotations themselves show, so no token match is demanded.
+    if desc_times or desc_names:
         if not (time_overlap or name_overlap or token_overlap):
             return False
 
@@ -247,15 +250,16 @@ def _finding_evidence_is_valid(
             return False
 
     # 2. Entity / subject name validation
-    # If the description names third-party subject persons (not witnesses giving these statements):
-    finding_witnesses = {
-        stmt_by_id[sid]["witness"].casefold()
-        for sid in quotes_by_sid
-        if sid in stmt_by_id
-    }
+    # If the description names third-party subject persons, those names must
+    # appear in the quoted evidence. A name that matches any word of a cited
+    # statement's witness name refers to that witness (who is identified by
+    # attribution, not necessarily by their own quote) and is exempt.
+    finding_witness_words: set[str] = set()
+    for sid in quotes_by_sid:
+        if sid in stmt_by_id:
+            finding_witness_words.update(stmt_by_id[sid]["witness"].casefold().split())
     third_party_names = {
-        name for name in desc_names
-        if name.casefold() not in finding_witnesses
+        name for name in desc_names if name.casefold() not in finding_witness_words
     }
     if third_party_names:
         all_text = " ".join(all_quote_texts).casefold()
@@ -289,16 +293,58 @@ def detect_inconsistencies(case_data: dict) -> list[dict]:
     if len(usable) < 2:
         return []
 
-    raw = _ask_gemma(_build_prompt(usable))
-    if raw is None:
+    ids = [s["statement_id"] for s in usable]
+    if ask_gemma is None:
+        return _status(
+            "model_unavailable",
+            "core.gemma_client.ask_gemma is unavailable; inconsistencies were not evaluated.",
+            ids,
+        )
+
+    try:
+        raw = _ask_gemma(_build_prompt(usable))
+    except GemmaClientError as exc:  # documented client failure: surface explicitly
+        return _status(
+            "model_unavailable",
+            f"The shared Gemma client failed or returned no content: {exc}; "
+            "inconsistencies were not evaluated.",
+            ids,
+        )
+    if raw is False:
+        # Unexpected client exception: fail safe with no findings.
         return []
+    if raw is None:
+        return _status(
+            "model_unavailable",
+            "The shared Gemma client failed or returned no content; "
+            "inconsistencies were not evaluated.",
+            ids,
+        )
     parsed = _parse_model_json(raw)
     if parsed is None:
-        return []
+        return _status(
+            "model_unavailable",
+            "Gemma returned malformed JSON; inconsistencies were not evaluated.",
+            ids,
+        )
 
     items = parsed if isinstance(parsed, list) else parsed.get("inconsistencies")
     stmt_by_id = {s["statement_id"]: s for s in usable}
     return _validate_items(items, stmt_by_id)
+
+
+def _status(
+    kind: str, description: str, statement_ids: list[str]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": kind,
+            "description": description,
+            "statement_ids": statement_ids,
+            "quotations": [],
+            "confidence": 0.0,
+        }
+    ]
 
 
 def _collect_statements(case_data: dict) -> list[dict[str, str]]:
@@ -359,7 +405,8 @@ def _build_prompt(statements: list[dict[str, str]]) -> str:
     return _SYSTEM_RULES + "\nEvidence:\n" + "\n\n".join(blocks) + "\n\nJSON:"
 
 
-def _ask_gemma(prompt: str) -> str | None:
+def _ask_gemma(prompt: str) -> str | None | bool:
+    """Return model text, None for empty content, or False on unexpected failure."""
     fn = None
     core_mod = sys.modules.get("core.gemma_client")
     if core_mod is not None and hasattr(core_mod, "ask_gemma"):
@@ -381,8 +428,19 @@ def _ask_gemma(prompt: str) -> str | None:
     except TypeError:
         try:
             result = fn(prompt=prompt)
+        except GemmaClientError:
+            raise
         except Exception:
-            return None
+            return False
+    except GemmaClientError:
+        # Documented client failure: let the caller report model_unavailable.
+        raise
+    except Exception:
+        # Unexpected failure: fail safe with no findings.
+        return False
+    except GemmaClientError:
+        # Documented client failure: let the caller report model_unavailable.
+        raise
     except Exception:
         return None
 
