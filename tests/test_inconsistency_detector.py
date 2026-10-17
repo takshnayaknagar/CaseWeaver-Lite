@@ -369,3 +369,90 @@ def test_client_failure_returns_empty_list(monkeypatch):
     result = detect_inconsistencies(_sample_case())
 
     assert result == []
+
+
+def _vehicle_case():
+    """Two statements about a vehicle: a red sedan vs a dark blue truck."""
+    return {
+        "statements": [
+            {
+                "statement_id": "ST-001",
+                "witness": "Jane Doe",
+                "text": (
+                    "I saw a man, around 6 feet tall, standing next to a red "
+                    "sedan at the intersection at 14:00."
+                ),
+            },
+            {
+                "statement_id": "ST-002",
+                "witness": "John Smith",
+                "text": (
+                    "He was a shorter man, and he got into a dark blue truck "
+                    "before leaving around 14:05."
+                ),
+            },
+        ]
+    }
+
+
+def _vehicle_model_output(description):
+    return {
+        "inconsistencies": [
+            {
+                "type": "direct_contradiction",
+                "description": description,
+                "statement_ids": ["ST-001", "ST-002"],
+                "quotations": [
+                    {
+                        "statement_id": "ST-001",
+                        "quotation": "standing next to a red sedan at the intersection at 14:00",
+                    },
+                    {
+                        "statement_id": "ST-002",
+                        "quotation": "he got into a dark blue truck before leaving around 14:05",
+                    },
+                ],
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+
+def test_hybrid_colour_claim_rejected(monkeypatch):
+    """Regression: the explanation says 'red truck', but no cited quotation
+    states a red truck — Jane Doe says 'red sedan' and John Smith says
+    'dark blue truck'. The unsupported descriptor pair must drop the finding
+    rather than present invented evidence.
+    """
+    _mock_gemma(
+        monkeypatch,
+        json.dumps(
+            _vehicle_model_output(
+                "One witness describes a red truck while the other describes "
+                "a dark blue truck."
+            )
+        ),
+    )
+
+    assert detect_inconsistencies(_vehicle_case()) == []
+
+
+def test_supported_colour_claim_accepted(monkeypatch):
+    """The same finding phrased with the details the quotations actually
+    state ('red sedan' vs 'dark blue truck') is kept.
+    """
+    _mock_gemma(
+        monkeypatch,
+        json.dumps(
+            _vehicle_model_output(
+                "One witness describes a red sedan while the other describes "
+                "a dark blue truck."
+            )
+        ),
+    )
+
+    result = detect_inconsistencies(_vehicle_case())
+
+    assert len(result) == 1
+    assert "red sedan" in result[0]["description"]
+    assert "dark blue truck" in result[0]["description"]

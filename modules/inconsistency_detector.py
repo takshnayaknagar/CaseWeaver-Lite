@@ -113,6 +113,13 @@ IRREGULAR_STEMS = {
     "wore": "wear", "worn": "wear", "wearing": "wear",
 }
 
+# Concrete descriptors (colours and shade modifiers) whose attribution to a
+# noun is objectively checkable against the quoted evidence.
+_DESCRIPTOR_ADJECTIVES = frozenset({
+    "red", "blue", "green", "black", "white", "gray", "grey", "yellow",
+    "orange", "purple", "pink", "brown", "silver", "gold", "beige", "dark",
+})
+
 
 def _stem_word(word: str) -> str:
     w = word.casefold()
@@ -222,6 +229,40 @@ def _quote_supports_description(
     return True
 
 
+def _unsupported_descriptor_pairs(
+    description: str, evidence_texts: list[str]
+) -> list[str]:
+    """Return descriptive adjective+noun pairs in the description that no
+    cited evidence text contains.
+
+    Concrete descriptors such as colours are objectively checkable: when a
+    description attributes one to a noun ("red truck"), that exact adjacent
+    pair must appear in a quotation or in the full text of a cited statement.
+    This rejects hybrid claims that merge details from different statements —
+    for example combining "red" from a "red sedan" quote with "truck" from a
+    "dark blue truck" quote — which no single cited statement made. Matching
+    is case-insensitive, so a capitalized place name in a statement (e.g.
+    "Red Truck") satisfies the check; distinguishing that lexical role is
+    beyond string validation.
+    """
+    words = re.findall(r"[A-Za-z]+", description)
+    normalized_texts = [
+        re.sub(r"\s+", " ", text).casefold() for text in evidence_texts
+    ]
+    unsupported: list[str] = []
+    for first, second in zip(words, words[1:]):
+        if first.casefold() not in _DESCRIPTOR_ADJECTIVES:
+            continue
+        if second.casefold() in _STOP_WORDS:
+            continue
+        pair = f"{first.casefold()} {second.casefold()}"
+        if pair not in unsupported and not any(
+            pair in text for text in normalized_texts
+        ):
+            unsupported.append(pair)
+    return unsupported
+
+
 def _finding_evidence_is_valid(
     description: str,
     quotes_by_sid: dict[str, list[dict[str, str]]],
@@ -266,7 +307,17 @@ def _finding_evidence_is_valid(
         if not any(name.casefold() in all_text for name in third_party_names):
             return False
 
-    # 3. Both sides must provide supporting evidence!
+    # 3. Concrete descriptor claims (e.g. colours) must appear in the cited
+    #    evidence — either inside a quotation or in a cited statement's text.
+    cited_statement_texts = [
+        stmt_by_id[sid]["text"] for sid in quotes_by_sid if sid in stmt_by_id
+    ]
+    if _unsupported_descriptor_pairs(
+        description, all_quote_texts + cited_statement_texts
+    ):
+        return False
+
+    # 4. Both sides must provide supporting evidence!
     for sid, q_list in quotes_by_sid.items():
         has_support = any(
             _quote_supports_description(

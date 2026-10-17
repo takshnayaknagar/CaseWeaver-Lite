@@ -5,6 +5,7 @@ import {
   addStatement,
   resetCase,
   analyzeAll,
+  analyzeTimeline,
 } from './api';
 import './App.css';
 
@@ -16,6 +17,11 @@ export default function App() {
   const [caseData, setCaseData] = useState(null);
   const [healthData, setHealthData] = useState(null);
   const [analysisResults, setAnalysisResults] = useState(null);
+
+  // Timeline-specific analysis (dedicated /api/analyze/timeline endpoint)
+  const [timelineEvents, setTimelineEvents] = useState(null);
+  const [timelineError, setTimelineError] = useState(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   // Loading & error states
   const [loadingCase, setLoadingCase] = useState(true);
@@ -127,6 +133,8 @@ export default function App() {
       const reset = await resetCase();
       setCaseData(reset);
       setAnalysisResults(null);
+      setTimelineEvents(null);
+      setTimelineError(null);
       setActionSuccess('Case file reset to default sample data.');
     } catch (err) {
       setActionError(`Reset failed: ${err.message}`);
@@ -137,6 +145,9 @@ export default function App() {
   async function handleAnalyze() {
     setAnalyzing(true);
     setActionError(null);
+    // A fresh full analysis supersedes any earlier dedicated timeline run.
+    setTimelineEvents(null);
+    setTimelineError(null);
     try {
       const results = await analyzeAll();
       setAnalysisResults(results);
@@ -145,6 +156,21 @@ export default function App() {
       setActionError(`Analysis failed: ${err.message}`);
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  // Handle dedicated timeline analysis (/api/analyze/timeline)
+  async function handleRunTimeline() {
+    setTimelineLoading(true);
+    setTimelineError(null);
+    setTimelineEvents(null);
+    try {
+      const events = await analyzeTimeline();
+      setTimelineEvents(events);
+    } catch (err) {
+      setTimelineError(err.message || 'Timeline analysis failed.');
+    } finally {
+      setTimelineLoading(false);
     }
   }
 
@@ -179,6 +205,23 @@ export default function App() {
   const inconsistenciesCount = Array.isArray(analysisResults?.inconsistencies)
     ? analysisResults.inconsistencies.length
     : '--';
+
+  // Timeline results: prefer a dedicated /api/analyze/timeline run, otherwise
+  // use the timeline section of a full case analysis. analyzeAll reports a
+  // failed module as {"error": "..."} instead of throwing, so both shapes are
+  // handled here.
+  const timelineData =
+    timelineError !== null
+      ? { error: timelineError }
+      : timelineEvents !== null
+        ? timelineEvents
+        : analysisResults?.timeline ?? null;
+  const timelineLoaded = timelineData !== null;
+  const timelineFetchError =
+    timelineLoaded && !Array.isArray(timelineData)
+      ? timelineData.error || 'Timeline analysis returned an unexpected response shape.'
+      : null;
+  const timelineEventList = Array.isArray(timelineData) ? timelineData : [];
 
   return (
     <div className="app-layout">
@@ -239,6 +282,9 @@ export default function App() {
               onClick={() => setActiveTab('timeline')}
             >
               <span>⏱️ Timeline</span>
+              {timelineLoaded && !timelineFetchError && (
+                <span className="nav-count">{timelineEventList.length}</span>
+              )}
             </button>
           </nav>
         </div>
@@ -260,7 +306,9 @@ export default function App() {
             </div>
             <div className="module-status-item">
               <span>Timeline Engine</span>
-              <span className="badge badge-unavailable">Pending Teammate</span>
+              <span className={`badge ${healthData?.modules?.timeline?.available ? 'badge-available' : 'badge-unavailable'}`}>
+                {healthData?.modules?.timeline?.available ? 'Available' : 'Unavailable'}
+              </span>
             </div>
             <div className="module-status-item">
               <span>Gemma AI Client</span>
@@ -714,31 +762,84 @@ export default function App() {
               <div style={{ marginBottom: '1.25rem' }}>
                 <h3 style={{ fontSize: '1.25rem', color: '#fff' }}>⏱️ Evidence-Linked Timeline</h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  Chronological event reconstruction with verbatim citations.
+                  Chronological event reconstruction via <code>modules/timeline.py</code>. Events are
+                  only recorded with verbatim citations; timestamps are never guessed.
                 </p>
               </div>
 
-              <div className="cw-card" style={{ borderLeft: '3px solid var(--accent-rose)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <span className="badge badge-unavailable">Module Unavailable</span>
-                  <strong style={{ color: '#fff' }}>modules/timeline.py</strong>
+              {!timelineLoaded ? (
+                <div className="cw-card" style={{ textAlign: 'center', padding: '3rem' }}>
+                  <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                    No timeline analysis has been run for this case session yet.
+                  </p>
+                  <button className="btn btn-primary" onClick={handleRunTimeline} disabled={timelineLoading}>
+                    {timelineLoading ? (
+                      <>
+                        <span className="spinner"></span> Extracting Events...
+                      </>
+                    ) : (
+                      '⏱️ Run Timeline Analysis'
+                    )}
+                  </button>
                 </div>
-                <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: '1.6' }}>
-                  The shared timeline extraction module has not yet been implemented by teammates. In accordance with project integrity standards, event timestamps and chronologies are never fabricated or guessed.
-                </p>
-                <div
-                  style={{
-                    backgroundColor: 'var(--bg-card-subtle)',
-                    padding: '0.85rem',
-                    borderRadius: '6px',
-                    marginTop: '1rem',
-                    fontSize: '0.8rem',
-                    color: 'var(--text-muted)',
-                  }}
-                >
-                  <strong>Expected Interface:</strong> <code>modules.timeline.extract_events(case_data: dict) -&gt; list[dict]</code>
+              ) : timelineFetchError ? (
+                <div className="cw-card" style={{ borderLeft: '3px solid var(--accent-rose)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <span className="badge badge-unavailable">Analysis Failed</span>
+                  </div>
+                  <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: '1.6' }}>
+                    The timeline analysis could not be completed. The backend reported:
+                  </p>
+                  <div className="verbatim-block" style={{ marginTop: '0.5rem' }}>
+                    <div style={{ fontSize: '0.85rem', color: '#e2e8f0' }}>{timelineFetchError}</div>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ marginTop: '1rem' }}
+                    onClick={handleRunTimeline}
+                    disabled={timelineLoading}
+                  >
+                    {timelineLoading ? 'Retrying...' : 'Retry Timeline Analysis'}
+                  </button>
                 </div>
-              </div>
+              ) : timelineEventList.length === 0 ? (
+                <div className="cw-card" style={{ textAlign: 'center', padding: '2.5rem' }}>
+                  <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📭</div>
+                  <h4 style={{ color: '#fff', marginBottom: '0.35rem' }}>No Events Extracted</h4>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: '600px', margin: '0 auto' }}>
+                    The timeline extractor returned no events for the current statements. This happens when no
+                    extracted event passes verbatim evidence validation, or when the shared Gemma model client is
+                    unreachable. No events, timestamps, or chronologies are fabricated to fill this view.
+                  </p>
+                </div>
+              ) : (
+                <div className="evidence-list">
+                  {timelineEventList.map((ev, idx) => (
+                    <div key={ev.event_id || idx} className="statement-card">
+                      <div className="statement-header">
+                        <div>
+                          <div className="witness-title">{ev.description}</div>
+                          <div className="statement-meta">
+                            {ev.date && <span>Date: {ev.date}</span>}
+                            {ev.time && <span>Time: {ev.time}</span>}
+                            {!ev.date && !ev.time && <span>No timestamp stated in evidence</span>}
+                            {ev.location && <span>Location: {ev.location}</span>}
+                            {ev.people?.length > 0 && <span>People: {ev.people.join(', ')}</span>}
+                          </div>
+                        </div>
+                        {ev.confidence !== undefined && ev.confidence !== null && (
+                          <span className="badge badge-review">Confidence: {Math.round(ev.confidence * 100)}%</span>
+                        )}
+                      </div>
+
+                      <div className="verbatim-block">
+                        <span className="verbatim-label">Verbatim source quotation ({ev.source_statement_id}):</span>
+                        <div className="verbatim-text">"{ev.source_quote}"</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
