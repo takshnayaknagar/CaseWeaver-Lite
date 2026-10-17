@@ -1,61 +1,259 @@
-/* CaseWeaver Lite Global Dark Theme */
+/* ==========================================================================
+   CaseWeaver Lite — Comprehensive Design System & Color Tokens
+   Typography: Manrope (Headings), DM Sans (UI/Body), JetBrains Mono (Code/IDs)
+   Themes: Full Dark & Light Mode variable systems
+   ========================================================================== */
+
 :root {
-  --bg-main: #0b111e;
-  --bg-sidebar: #080d17;
-  --bg-card: #162032;
-  --bg-card-subtle: #0d1524;
-  --border-color: #1e293b;
-  --border-light: #334155;
+  /* Common typography */
+  --font-heading: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  --text-main: #f1f5f9;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  /* Common radius & transitions */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
 
-  --accent-cyan: #38bdf8;
-  --accent-cyan-glow: rgba(56, 189, 248, 0.15);
-  --accent-amber: #f59e0b;
-  --accent-amber-bg: rgba(245, 158, 11, 0.12);
-  --accent-emerald: #10b981;
-  --accent-emerald-bg: rgba(16, 185, 129, 0.15);
-  --accent-rose: #ef4444;
-  --accent-rose-bg: rgba(239, 68, 68, 0.15);
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-base: 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-smooth: 350ms cubic-bezier(0.16, 1, 0.3, 1);
 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  color-scheme: dark;
+  /* Brand Accents */
+  --accent-blue: #2563eb;
+  --accent-blue-hover: #1d4ed8;
+  --accent-blue-subtle: rgba(37, 99, 235, 0.12);
+  --accent-blue-border: rgba(37, 99, 235, 0.28);
+
+  --accent-cyan: #0284c7;
+  --accent-cyan-light: #38bdf8;
+  --accent-cyan-subtle: rgba(2, 132, 199, 0.1);
+  --accent-cyan-border: rgba(2, 132, 199, 0.25);
+
+  --accent-emerald: #059669;
+  --accent-emerald-subtle: rgba(5, 150, 105, 0.1);
+  --accent-emerald-border: rgba(5, 150, 105, 0.25);
+
+  --accent-amber: #d97706;
+  --accent-amber-subtle: rgba(217, 119, 6, 0.1);
+  --accent-amber-border: rgba(217, 119, 6, 0.25);
+
+  --accent-rose: #e11d48;
+  --accent-rose-subtle: rgba(225, 29, 72, 0.1);
+  --accent-rose-border: rgba(225, 29, 72, 0.25);
 }
 
-* {
+/* ==========================================================================
+   DARK THEME (Default)
+   Refined Slate / Navy Surfaces inspired by Linear & Vercel
+   ========================================================================== */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg-app: #080b11;
+  --bg-sidebar: #0b0f17;
+  --bg-header: rgba(11, 15, 23, 0.85);
+  --bg-surface: #101622;
+  --bg-surface-elevated: #161e2e;
+  --bg-surface-inset: #090d14;
+  --bg-surface-hover: #192233;
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-default: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-focus: #38bdf8;
+
+  /* Typography Colors */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-inverse: #0f172a;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
+
+  /* Specific Component Overrides */
+  --disclaimer-bg: rgba(217, 119, 6, 0.12);
+  --disclaimer-border: rgba(245, 158, 11, 0.3);
+  --disclaimer-text: #fbbf24;
+
+  --badge-demo-bg: rgba(2, 132, 199, 0.16);
+  --badge-demo-text: #7dd3fc;
+  --badge-demo-border: rgba(56, 189, 248, 0.3);
+
+  --badge-available-bg: rgba(16, 185, 129, 0.14);
+  --badge-available-text: #34d399;
+  --badge-available-border: rgba(52, 211, 153, 0.3);
+
+  --badge-unavailable-bg: rgba(244, 63, 94, 0.14);
+  --badge-unavailable-text: #fb7185;
+  --badge-unavailable-border: rgba(251, 113, 133, 0.3);
+
+  --badge-review-bg: rgba(245, 158, 11, 0.14);
+  --badge-review-text: #fcd34d;
+  --badge-review-border: rgba(252, 211, 77, 0.3);
+
+  --id-badge-bg: #0d121c;
+  --id-badge-text: #38bdf8;
+  --id-badge-border: rgba(56, 189, 248, 0.25);
+
+  --input-bg: #0c1018;
+  --input-border: rgba(255, 255, 255, 0.12);
+  --input-text: #f8fafc;
+}
+
+/* ==========================================================================
+   LIGHT THEME
+   Polished high-contrast warm slate surfaces (Stripe / Linear light style)
+   ========================================================================== */
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg-app: #f8fafc;
+  --bg-sidebar: #f1f5f9;
+  --bg-header: rgba(248, 250, 252, 0.88);
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #ffffff;
+  --bg-surface-inset: #f1f5f9;
+  --bg-surface-hover: #f1f5f9;
+
+  /* Borders */
+  --border-subtle: #e2e8f0;
+  --border-default: #cbd5e1;
+  --border-strong: #94a3b8;
+  --border-focus: #0284c7;
+
+  /* Typography Colors */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --text-inverse: #ffffff;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04);
+
+  /* Specific Component Overrides */
+  --disclaimer-bg: #fef3c7;
+  --disclaimer-border: #fcd34d;
+  --disclaimer-text: #92400e;
+
+  --badge-demo-bg: #e0f2fe;
+  --badge-demo-text: #0369a1;
+  --badge-demo-border: #bae6fd;
+
+  --badge-available-bg: #ecfdf5;
+  --badge-available-text: #047857;
+  --badge-available-border: #a7f3d0;
+
+  --badge-unavailable-bg: #ffe4e6;
+  --badge-unavailable-text: #be123c;
+  --badge-unavailable-border: #fecdd3;
+
+  --badge-review-bg: #fef3c7;
+  --badge-review-text: #b45309;
+  --badge-review-border: #fde68a;
+
+  --id-badge-bg: #e0f2fe;
+  --id-badge-text: #0284c7;
+  --id-badge-border: #bae6fd;
+
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+  --input-text: #0f172a;
+}
+
+/* ==========================================================================
+   Base CSS Resets & Standards
+   ========================================================================== */
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-body {
-  background-color: var(--bg-main);
-  color: var(--text-main);
-  min-height: 100vh;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
 }
 
-#root {
+body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+  transition: background-color var(--transition-base), color var(--transition-base);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  color: var(--text-primary);
+  letter-spacing: -0.025em;
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}
+
+code, kbd, samp, pre {
+  font-family: var(--font-mono);
+}
+
+button, input, optgroup, select, textarea {
+  font-family: inherit;
+  font-size: 100%;
+  line-height: inherit;
+  color: inherit;
 }
 
 /* Scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-main);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 4px;
+  background: var(--border-default);
+  border-radius: var(--radius-full);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-light);
+  background: var(--border-strong);
+}
+
+/* Accessible focus ring */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Reduced motion: honor the OS preference for CSS-driven animation.
+   Motion JS animations are handled by <MotionConfig reducedMotion="user"> in App.jsx. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
