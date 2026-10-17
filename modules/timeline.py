@@ -133,6 +133,14 @@ def _rejection_reasons(
                     reasons.append(
                         "time field conflicts with the time stated in the source quote"
                     )
+                unsupported = _unsupported_names(
+                    event.get("description") or "", quote
+                )
+                if unsupported:
+                    reasons.append(
+                        "description introduces a name not present in the source quote: "
+                        + ", ".join(unsupported)
+                    )
 
     if event.get("date") is not None and not _valid_date(event.get("date")):
         reasons.append(f"date is not YYYY-MM-DD: {event.get('date')!r}")
@@ -181,6 +189,33 @@ def _time_tokens(text: str) -> set[int]:
     return tokens
 
 
+_NAME_TOKEN_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
+# Common capitalized sentence starters that are not names; sentence-initial
+# tokens are skipped anyway, so this only guards mid-sentence occurrences.
+_NON_NAME_CAPITALIZED = {
+    "The", "At", "In", "On", "From", "Until", "After", "Before", "Near",
+    "Witness", "Then", "When", "While", "Approximately", "Around",
+}
+
+
+def _unsupported_names(description: str, quote: str) -> list[str]:
+    """Return capitalized mid-sentence tokens in the description that do not
+    appear (case-insensitively) anywhere in the quote.
+
+    A name absent from its own evidence quote is a clear unsupported claim;
+    nothing is inferred beyond that.
+    """
+    quote_folded = quote.casefold()
+    tokens = _NAME_TOKEN_RE.findall(description)
+    unsupported: list[str] = []
+    for position, token in enumerate(tokens):
+        if position == 0 or token in _NON_NAME_CAPITALIZED:
+            continue
+        if token.casefold() not in quote_folded and token not in unsupported:
+            unsupported.append(token)
+    return unsupported
+
+
 def validate_event(
     event: dict[str, Any],
     statements_by_id: dict[str, str],
@@ -219,6 +254,11 @@ def validate_event(
     if len(quote_times) == 1 and event_time is not None and _valid_time(event_time):
         if _time_minutes(event_time) not in quote_times:
             return False
+
+    # A mid-sentence capitalized name absent from the quote is a clear
+    # unsupported claim; comparisons are case-insensitive to stay conservative.
+    if _unsupported_names(event["description"], quote):
+        return False
 
     if event["date"] is not None and not _valid_date(event["date"]):
         return False
@@ -326,6 +366,7 @@ Return ONLY a JSON array of event objects with these exact fields:
 
 Rules:
 - Use only facts explicitly stated in the supplied statement.
+- description must restate only what its own source_quote says; never add people, places, or activities that are not in that quote.
 - Keep source_statement_id EXACTLY equal to the supplied statement ID verbatim; never modify, prefix, or suffix it.
 - source_quote must be an exact, verbatim substring of the statement.
 - Use YYYY-MM-DD dates, or null when unknown.

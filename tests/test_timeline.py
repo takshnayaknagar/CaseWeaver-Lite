@@ -236,6 +236,39 @@ def test_event_time_with_timeless_quote_is_not_compared():
     assert validate_event(event, {"S1": statement}) is True
 
 
+def test_description_introducing_unrelated_name_is_rejected():
+    statement = "At 8:00 PM, I saw Maya near the exhibition room."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+
+    event["description"] = "Witness observed Daniel leaving the museum"
+    assert validate_event(event, {"S1": statement}) is False
+
+
+def test_description_summary_reusing_quote_names_is_accepted():
+    statement = "At 8:00 PM, I saw Maya near the exhibition room."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+
+    event["description"] = "Witness observed Maya near the exhibition room"
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_extraction_prompt_requires_description_grounded_in_quote(monkeypatch):
+    from modules.timeline import extract_events
+
+    prompts = []
+
+    def fake_ask_gemma(prompt):
+        prompts.append(prompt)
+        return json.dumps([])
+
+    install_mock_gemma(monkeypatch, fake_ask_gemma)
+
+    extract_events({"statements": [{"statement_id": "S1", "text": "I saw Maya."}]})
+
+    assert prompts, "expected the extraction prompt to be sent"
+    assert "never add people, places, or activities" in prompts[0]
+
+
 def test_extract_events_continues_after_invalid_event(monkeypatch, caplog):
     import logging
 
