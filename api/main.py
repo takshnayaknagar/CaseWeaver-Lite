@@ -250,6 +250,20 @@ def add_statement(body: StatementIn) -> dict[str, Any]:
     return stmt
 
 
+@app.delete("/api/case/statements/{statement_id}")
+def delete_statement(statement_id: str) -> dict[str, Any]:
+    """Remove a witness statement from the active case by ID."""
+    stmts = _active_case.setdefault("statements", [])
+    for position, stmt in enumerate(stmts):
+        if str(stmt.get("statement_id", "")) == statement_id:
+            del stmts[position]
+            return {"deleted": statement_id}
+    raise HTTPException(
+        status_code=404,
+        detail=f"Statement ID '{statement_id}' not found.",
+    )
+
+
 # ---- Analysis endpoints --------------------------------------------------
 
 @app.post("/api/analyze/identities")
