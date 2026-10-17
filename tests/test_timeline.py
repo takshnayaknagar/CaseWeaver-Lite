@@ -8,19 +8,17 @@ from modules.timeline import (
 )
 
 
-def make_event(event_id, date_value, time_start, quote="At 8:00 PM, I saw Alex."):
+def make_event(event_id, date_value, time_value, quote="At 8:00 PM, I saw Alex."):
     return {
         "event_id": event_id,
         "description": "Witness observed Alex",
         "date": date_value,
-        "time_start": time_start,
-        "time_end": None,
-        "time_precision": "exact" if time_start else "unknown",
+        "time": time_value,
         "people": ["Alex"],
         "location": None,
         "source_statement_id": "S1",
         "source_quote": quote,
-        "confidence": "high",
+        "confidence": 0.9,
     }
 
 
@@ -91,7 +89,15 @@ def test_invalid_what_if_time_is_ignored():
 
     result = sort_events_with_adjustments(events, {"E1": "29:75"})
 
-    assert result[0]["time_start"] == "19:00"
+    assert result[0]["time"] == "19:00"
+
+
+def test_what_if_accepts_canonical_twelve_hour_time():
+    events = [make_event("E1", "2026-10-15", "19:00")]
+
+    result = sort_events_with_adjustments(events, {"E1": "8:30 PM"})
+
+    assert result[0]["time"] == "8:30 PM"
 
 
 def test_quote_must_be_verbatim():
@@ -104,11 +110,33 @@ def test_quote_must_be_verbatim():
     assert validate_event(event, statements) is False
 
 
-def test_unknown_precision_is_allowed():
+def test_unknown_time_is_allowed():
     event = make_event("E1", None, None)
-    event["time_precision"] = "unknown"
 
     assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."})
+
+
+def test_confidence_must_be_numeric_in_range():
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is True
+
+    event["confidence"] = "high"
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is False
+
+    event["confidence"] = 1.5
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is False
+
+    event["confidence"] = None
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is True
+
+
+def test_legacy_time_fields_are_rejected():
+    event = make_event("E1", "2026-10-15", "20:00")
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is True
+    assert "time_start" not in event
+    assert "time_end" not in event
+    assert "time_precision" not in event
 
 
 def test_invalid_date_is_rejected():
@@ -132,9 +160,7 @@ def make_gemma_event(statement_id, quote, event_id="S1-E001"):
         "event_id": event_id,
         "description": "Witness starts security shift",
         "date": "2026-10-15",
-        "time_start": "19:45",
-        "time_end": None,
-        "time_precision": "exact",
+        "time": "19:45",
         "people": ["Alex"],
         "location": None,
         "source_statement_id": statement_id,
@@ -178,6 +204,11 @@ def test_extract_events_accepts_valid_evidence(monkeypatch):
     assert len(result) == 1
     assert result[0]["source_quote"] == quote
     assert result[0]["source_statement_id"] == "S1"
+    assert result[0]["time"] == "19:45"
+    assert result[0]["confidence"] == 0.9
+    assert "time_start" not in result[0]
+    assert "time_end" not in result[0]
+    assert "time_precision" not in result[0]
 
 
 def test_extract_events_rejects_fabricated_quote(monkeypatch):
@@ -227,7 +258,7 @@ def test_extract_events_continues_after_client_failure(monkeypatch):
         "S2", quote, event_id="S2-E001"
     )
     valid_event["date"] = "2026-10-15"
-    valid_event["time_start"] = "20:05"
+    valid_event["time"] = "20:05"
 
     def fake_ask_gemma(prompt):
         if "First witness statement." in prompt:
