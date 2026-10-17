@@ -441,11 +441,134 @@ if active_nav == "Overview":
         )
 
 # ==============================================================================
-# View: Placeholders for Subsequent Phases
+# View: Evidence Workspace (Phase 2)
 # ==============================================================================
 elif active_nav == "Evidence":
-    st.subheader("📁 Evidence Workspace")
-    st.info("Phase 2 will implement the complete Evidence Workspace with source traceability and filters.")
+    import html
+
+    st.markdown("### 📁 Evidence Workspace")
+    st.caption("Verbatim witness statements and recorded testimonies with source traceability.")
+
+    statements = current_case.get("statements", [])
+    if not statements:
+        st.info("No witness statements recorded in this case file. Load a sample case from the sidebar or add statements in Overview.")
+    else:
+        # Collect unique witnesses safely without fabricating missing names
+        witness_names = sorted(
+            list(
+                {
+                    str(s.get("witness_name") or s.get("witness") or "Unnamed Witness").strip()
+                    for s in statements
+                    if (s.get("witness_name") or s.get("witness"))
+                }
+            )
+        )
+        witness_options = ["All Witnesses"] + witness_names
+
+        # Filters toolbar
+        col_search, col_filter, col_reset = st.columns([3, 2, 1])
+
+        with col_search:
+            search_query = st.text_input(
+                "🔍 Search statements & witnesses:",
+                key="evidence_search_input",
+                placeholder="Type keywords, witness names, or IDs...",
+            )
+
+        with col_filter:
+            selected_witness = st.selectbox(
+                "Filter by Witness:",
+                options=witness_options,
+                key="evidence_witness_select",
+            )
+
+        with col_reset:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("Reset Filters", use_container_width=True):
+                st.session_state.evidence_search_input = ""
+                st.session_state.evidence_witness_select = "All Witnesses"
+                st.rerun()
+
+        # Filtering logic: preserve original items, never mutate
+        filtered_statements: list[dict[str, Any]] = []
+        for stmt in statements:
+            w_name = str(stmt.get("witness_name") or stmt.get("witness") or "Unnamed Witness")
+            s_id = str(stmt.get("statement_id") or stmt.get("id") or "Unassigned ID")
+            text = str(stmt.get("text") or stmt.get("statement") or stmt.get("quote") or "")
+
+            # Witness filter
+            if selected_witness != "All Witnesses" and w_name != selected_witness:
+                continue
+
+            # Case-insensitive text search across witness name, ID, and statement text
+            if search_query:
+                q = search_query.strip().lower()
+                if (q not in w_name.lower()) and (q not in s_id.lower()) and (q not in text.lower()):
+                    continue
+
+            filtered_statements.append(stmt)
+
+        # Counter display
+        total_count = len(statements)
+        matched_count = len(filtered_statements)
+        st.markdown(
+            f"<div style='margin-bottom: 1rem; color: #94a3b8; font-size: 0.9rem;'>"
+            f"Showing <strong style='color:#38bdf8;'>{matched_count}</strong> of <strong>{total_count}</strong> recorded statement(s)"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Render statement cards
+        if not filtered_statements:
+            st.warning("No witness statements match the selected filter or search criteria.")
+        else:
+            for stmt in filtered_statements:
+                w_name = stmt.get("witness_name") or stmt.get("witness") or "Unnamed Witness"
+                s_id = stmt.get("statement_id") or stmt.get("id") or "Unassigned ID"
+                raw_text = stmt.get("text") or stmt.get("statement") or stmt.get("quote") or ""
+                interview_date = stmt.get("interview_date") or stmt.get("date")
+                role = stmt.get("role")
+
+                # Metadata elements (never fabricate missing timestamps or dates)
+                meta_items: list[str] = [f"Source ID: <code>{html.escape(str(s_id))}</code>"]
+                if role:
+                    meta_items.append(f"Role: <span>{html.escape(str(role))}</span>")
+                if interview_date:
+                    meta_items.append(f"Recorded: <span>{html.escape(str(interview_date))}</span>")
+                meta_html = " &nbsp;|&nbsp; ".join(meta_items)
+
+                escaped_name = html.escape(str(w_name))
+                if raw_text:
+                    body_html = f'"{html.escape(str(raw_text))}"'
+                else:
+                    body_html = '<span style="color: #64748b; font-style: italic;">[No statement text recorded]</span>'
+
+                st.markdown(
+                    f"""
+                    <div class="cw-card" style="border-left: 3px solid #38bdf8;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.4rem;">
+                            <div>
+                                <span style="font-size: 1.1rem; font-weight: 600; color: #f1f5f9;">{escaped_name}</span>
+                                <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.2rem;">
+                                    {meta_html}
+                                </div>
+                            </div>
+                            <span class="cw-badge-demo" style="background:#1e293b; border:1px solid #334155; color:#38bdf8;">
+                                {html.escape(str(s_id))}
+                            </span>
+                        </div>
+                        <div style="background-color: #0d1524; border-radius: 6px; padding: 0.85rem; margin-top: 0.6rem; border: 1px solid #1e293b;">
+                            <span style="color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.25rem;">
+                                Verbatim Witness Statement:
+                            </span>
+                            <div style="color: #e2e8f0; font-size: 0.95rem; line-height: 1.5; font-style: italic;">
+                                {body_html}
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 elif active_nav == "Timeline":
     st.subheader("⏱️ Timeline")
