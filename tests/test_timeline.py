@@ -269,6 +269,51 @@ def test_extraction_prompt_requires_description_grounded_in_quote(monkeypatch):
     assert "never add people, places, or activities" in prompts[0]
 
 
+def test_iso_datetime_in_time_field_is_rejected():
+    statement = "I entered the museum at 8:05 PM."
+    event = make_event("E1", "2026-10-15", "2026-10-15T20:05:00", quote=statement)
+    event["description"] = "Entered the museum"
+
+    assert validate_event(event, {"S1": statement}) is False
+
+
+def test_malformed_people_values_are_rejected():
+    statement = "At 8:00 PM, I saw Maya near the exhibition room."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+    event["description"] = "Witness observed Maya"
+
+    for bad in ("Maya", None, {"name": "Maya"}, [1, 2], ["Maya", 3]):
+        event["people"] = bad
+        assert validate_event(event, {"S1": statement}) is False, f"people={bad!r}"
+
+    event["people"] = []
+    assert validate_event(event, {"S1": statement}) is True
+
+    event["people"] = ["Maya"]
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_extraction_prompt_states_field_formats(monkeypatch):
+    from modules.timeline import extract_events
+
+    prompts = []
+
+    def fake_ask_gemma(prompt):
+        prompts.append(prompt)
+        return json.dumps([])
+
+    install_mock_gemma(monkeypatch, fake_ask_gemma)
+
+    extract_events({"statements": [{"statement_id": "S1", "text": "I saw Maya."}]})
+
+    assert prompts, "expected the extraction prompt to be sent"
+    prompt = prompts[0]
+    assert "date must be YYYY-MM-DD" in prompt
+    assert "NEVER be an ISO datetime" in prompt
+    assert "ALWAYS be a JSON array of name strings" in prompt
+    assert "exact, verbatim substring of its own source statement" in prompt
+
+
 def test_extract_events_continues_after_invalid_event(monkeypatch, caplog):
     import logging
 
