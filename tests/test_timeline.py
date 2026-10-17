@@ -248,6 +248,103 @@ def test_extract_events_handles_invalid_json(monkeypatch):
     assert result == []
 
 
+def test_extract_events_accepts_fenced_json(monkeypatch):
+    from modules.timeline import extract_events
+
+    quote = "I started my shift at 7:45 PM."
+    event = make_gemma_event("S1", quote)
+    fenced = "```json\n" + json.dumps([event]) + "\n```"
+
+    install_mock_gemma(monkeypatch, lambda prompt: fenced)
+
+    result = extract_events({
+        "incident_date": "2026-10-15",
+        "statements": [{"statement_id": "S1", "witness_name": "Alex", "text": quote}],
+    })
+
+    assert len(result) == 1
+    assert result[0]["confidence"] == 0.9
+
+
+def test_extract_events_logs_malformed_json_warning(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    install_mock_gemma(monkeypatch, lambda prompt: "```json\n{oops")
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift."}]
+        })
+
+    assert result == []
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("not valid JSON" in record.getMessage() for record in warnings)
+    # Diagnostics must not leak witness text.
+    assert all("I started my shift" not in record.getMessage() for record in warnings)
+
+
+def test_extract_events_logs_invalid_source_quote(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    event = make_gemma_event("S1", "I saw the suspect.")
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift at 7:45 PM."}]
+        })
+
+    assert result == []
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("rejected by evidence validation" in record.getMessage() for record in warnings)
+    assert any("not a verbatim substring" in record.getMessage() for record in warnings)
+    # The fabricated quote itself must not be echoed into logs.
+    assert all("I saw the suspect" not in record.getMessage() for record in warnings)
+
+
+def test_extract_events_logs_wrong_source_statement_id(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    quote = "I started my shift at 7:45 PM."
+    event = make_gemma_event("S1-9", quote)  # model rewrote the statement id
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": quote}]
+        })
+
+    assert result == []
+    assert any("does not match the current statement id" in r.getMessage() for r in caplog.records)
+
+
+def test_extract_events_logs_client_failure(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    def failing_ask_gemma(prompt):
+        raise ConnectionError("Ollama is down")
+
+    install_mock_gemma(monkeypatch, failing_ask_gemma)
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift."}]
+        })
+
+    assert result == []
+    assert any("Gemma request failed" in r.getMessage() for r in caplog.records)
+
+
 
 
 def test_extract_events_continues_after_client_failure(monkeypatch):

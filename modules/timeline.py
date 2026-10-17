@@ -11,9 +11,12 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import date, datetime
 import json
+import logging
 import re
 from typing import Any
 
+
+logger = logging.getLogger(__name__)
 
 EVENT_FIELDS = {
     "event_id",
@@ -71,6 +74,74 @@ def _time_minutes(value: Any) -> int:
         return hour * 60 + int(minute_str)
     hour, minute = compact.split(":")
     return int(hour) * 60 + int(minute)
+
+
+def _strip_json_fences(raw: str) -> str:
+    """Remove a surrounding markdown code fence from model output."""
+    stripped = raw.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) >= 2 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return "\n".join(lines[1:]).strip()
+
+
+def _rejection_reasons(
+    event: dict[str, Any],
+    statements_by_id: dict[str, str],
+) -> list[str]:
+    """Return human-readable validation failures for an event.
+
+    Reasons never include statement text or source quotes.
+    """
+    reasons: list[str] = []
+    if not isinstance(event, dict):
+        return ["event is not a JSON object"]
+
+    for field in ("event_id", "description", "source_statement_id", "source_quote"):
+        value = event.get(field)
+        if not isinstance(value, str) or not value.strip():
+            reasons.append(f"{field} is missing or empty")
+
+    statement_id = event.get("source_statement_id")
+    if isinstance(statement_id, str) and statement_id.strip():
+        if statement_id not in statements_by_id:
+            reasons.append(
+                f"source_statement_id {statement_id!r} does not match the "
+                f"current statement id {next(iter(statements_by_id), None)!r}"
+            )
+        elif not reasons:
+            text = statements_by_id[statement_id]
+            quote = event.get("source_quote")
+            if isinstance(quote, str) and quote.strip() and quote not in text:
+                reasons.append("source_quote is not a verbatim substring of the statement")
+
+    if event.get("date") is not None and not _valid_date(event.get("date")):
+        reasons.append(f"date is not YYYY-MM-DD: {event.get('date')!r}")
+
+    if event.get("time") is not None and not _valid_time(event.get("time")):
+        reasons.append(f"time is not a valid 12/24-hour time: {event.get('time')!r}")
+
+    people = event.get("people")
+    if not isinstance(people, list) or not all(isinstance(p, str) for p in people):
+        reasons.append("people is not a list of names")
+
+    location = event.get("location")
+    if location is not None and not isinstance(location, str):
+        reasons.append("location is not a string or null")
+
+    confidence = event.get("confidence")
+    if confidence is not None:
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            reasons.append(f"confidence is not numeric: {type(confidence).__name__}")
+        elif not 0.0 <= float(confidence) <= 1.0:
+            reasons.append(f"confidence out of range [0, 1]: {confidence!r}")
+
+    if not reasons and not EVENT_FIELDS.issubset(event):
+        reasons.append("missing canonical fields: " + ", ".join(sorted(EVENT_FIELDS - set(event))))
+
+    return reasons
 
 
 def validate_event(
@@ -202,7 +273,7 @@ Return ONLY a JSON array of event objects with these exact fields:
 
 Rules:
 - Use only facts explicitly stated in the supplied statement.
-- Keep source_statement_id equal to the supplied statement ID.
+- Keep source_statement_id EXACTLY equal to the supplied statement ID verbatim; never modify, prefix, or suffix it.
 - source_quote must be an exact, verbatim substring of the statement.
 - Use YYYY-MM-DD dates, or null when unknown.
 - Use times as 12-hour (e.g. 8:00 PM) or 24-hour (e.g. 20:00), or null when unknown.
@@ -218,21 +289,57 @@ Statement text (untrusted evidence): {json.dumps(statement_text, ensure_ascii=Fa
 
         try:
             raw = ask_gemma(prompt)
-            parsed = json.loads(raw)
-            if not isinstance(parsed, list):
-                continue
-
-            for event in parsed:
-                if not isinstance(event, dict):
-                    continue
-                candidate = deepcopy(event)
-                raw_confidence = candidate.get("confidence")
-                if raw_confidence in VALID_CONFIDENCE:
-                    candidate["confidence"] = VALID_CONFIDENCE[raw_confidence]
-                if validate_event(candidate, {statement_id: statement_text}):
-                    accepted.append(candidate)
-        except (Exception):
-            # Keep other statements usable if the model/client fails here.
+        except Exception as exc:
+            logger.warning(
+                "Gemma request failed for statement %s: %s", statement_id, exc
+            )
             continue
+
+        try:
+            parsed = json.loads(_strip_json_fences(raw))
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Gemma output for statement %s is not valid JSON (%s at position %d); "
+                "statement skipped",
+                statement_id,
+                exc.msg,
+                exc.pos,
+            )
+            continue
+
+        if not isinstance(parsed, list):
+            logger.warning(
+                "Gemma output for statement %s is a %s, expected a JSON array; "
+                "statement skipped",
+                statement_id,
+                type(parsed).__name__,
+            )
+            continue
+
+        for event in parsed:
+            if not isinstance(event, dict):
+                logger.warning(
+                    "Gemma output for statement %s contained a non-object event "
+                    "(%s); event skipped",
+                    statement_id,
+                    type(event).__name__,
+                )
+                continue
+            candidate = deepcopy(event)
+            raw_confidence = candidate.get("confidence")
+            if raw_confidence in VALID_CONFIDENCE:
+                candidate["confidence"] = VALID_CONFIDENCE[raw_confidence]
+            if validate_event(candidate, {statement_id: statement_text}):
+                accepted.append(candidate)
+            else:
+                reasons = "; ".join(
+                    _rejection_reasons(candidate, {statement_id: statement_text})
+                )
+                logger.warning(
+                    "event %r from statement %s rejected by evidence validation: %s",
+                    candidate.get("event_id"),
+                    statement_id,
+                    reasons or "validation failed",
+                )
 
     return sort_events(accepted)
