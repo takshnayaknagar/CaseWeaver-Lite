@@ -248,6 +248,9 @@ A statement compared with itself must have score `0` (`scores[i][i] == 0`). Scor
 
 **Graphviz rendering failure:** Install the Graphviz system application as well as the Python package.
 
+**Invalid model output:** Treat the analysis as failed or flag invalid findings. Never silently replace real inference with mock results.
+
+**Graphviz rendering failure:** Install the Graphviz system application as well as the Python package.
 ## License
 
 Hackathon prototype. Add a project license before distributing the code publicly.
