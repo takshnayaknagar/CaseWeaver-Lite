@@ -382,6 +382,63 @@ if active_nav == "Overview":
             current_case["summary"] = c_summary
             st.success("Metadata updated.")
 
+    if st.session_state.get("statement_status_msg"):
+        st.success(st.session_state.statement_status_msg)
+        st.session_state.statement_status_msg = None
+
+    with st.expander("➕ Add Witness Statement", expanded=False):
+        with st.form("add_statement_form", clear_on_submit=True):
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                new_witness = st.text_input("Witness Name *", placeholder="e.g. Marcus Vance")
+                new_role = st.text_input("Witness Role (Optional)", placeholder="e.g. Bystander, Security Guard")
+            with col_f2:
+                new_id = st.text_input("Statement ID (Optional, auto-generated if blank)", placeholder="e.g. ST-005")
+                new_date = st.text_input("Interview Date/Time (Optional)", placeholder="e.g. 2026-10-15 15:00")
+
+            new_text = st.text_area("Verbatim Statement Text *", placeholder="Exact verbatim statement as given by the witness...")
+
+            submit_stmt = st.form_submit_button("Add Witness Statement", type="primary", use_container_width=True)
+            if submit_stmt:
+                witness_clean = new_witness.strip()
+                text_clean = new_text.strip()
+                if not witness_clean:
+                    st.error("Witness Name is required and cannot be empty.")
+                elif not text_clean:
+                    st.error("Verbatim Statement Text is required and cannot be empty.")
+                else:
+                    existing_stmts = current_case.setdefault("statements", [])
+                    existing_ids = {
+                        str(s.get("statement_id") or s.get("id") or "").strip()
+                        for s in existing_stmts
+                    }
+                    custom_id = new_id.strip()
+                    if custom_id and custom_id in existing_ids:
+                        st.error(f"Statement ID '{custom_id}' already exists in this case. Please provide a unique ID or leave blank to auto-generate.")
+                    else:
+                        if custom_id:
+                            assigned_id = custom_id
+                        else:
+                            idx = len(existing_stmts) + 1
+                            while f"ST-{idx:03d}" in existing_ids:
+                                idx += 1
+                            assigned_id = f"ST-{idx:03d}"
+
+                        new_statement: dict[str, Any] = {
+                            "statement_id": assigned_id,
+                            "witness_name": witness_clean,
+                            "text": text_clean,
+                        }
+                        if new_role.strip():
+                            new_statement["role"] = new_role.strip()
+                        if new_date.strip():
+                            new_statement["interview_date"] = new_date.strip()
+
+                        existing_stmts.append(new_statement)
+                        st.session_state.analysis_results["is_stale"] = True
+                        st.session_state.statement_status_msg = f"Witness statement '{assigned_id}' for '{witness_clean}' was successfully added."
+                        st.rerun()
+
     st.markdown("### Recorded Statements (Workspace Preview)")
     if current_case.get("statements"):
         for stmt in current_case["statements"]:
