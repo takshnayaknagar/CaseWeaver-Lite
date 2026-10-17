@@ -6,6 +6,7 @@ import {
   Moon,
   Menu,
   X,
+  Trash2,
   LayoutDashboard,
   FileText,
   Users,
@@ -30,6 +31,7 @@ import {
   getCase,
   getHealth,
   addStatement,
+  deleteStatement,
   resetCase,
   analyzeAll,
 } from './api';
@@ -216,6 +218,26 @@ export default function App() {
       setFormError(err.message || 'Failed to add statement.');
     } finally {
       setSubmittingStmt(false);
+    }
+  }
+
+  // Handle statement deletion
+  async function handleDeleteStatement(stmt) {
+    if (!window.confirm(`Delete statement '${stmt.statement_id}' from ${stmt.witness_name}? This cannot be undone.`)) {
+      return;
+    }
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await deleteStatement(stmt.statement_id);
+      setCaseData((prev) =>
+        prev
+          ? { ...prev, statements: (prev.statements || []).filter((s) => s.statement_id !== stmt.statement_id) }
+          : prev
+      );
+      setActionSuccess(`Statement '${stmt.statement_id}' was deleted.`);
+    } catch (err) {
+      setActionError(`Delete failed: ${err.message}`);
     }
   }
 
@@ -853,7 +875,18 @@ export default function App() {
                               )}
                             </div>
                           </div>
-                          <span className="badge badge-id">{stmt.statement_id}</span>
+                          <div className="statement-actions">
+                            <button
+                              type="button"
+                              className="btn-icon-danger"
+                              onClick={() => handleDeleteStatement(stmt)}
+                              aria-label={`Delete statement ${stmt.statement_id}`}
+                              title={`Delete statement ${stmt.statement_id}`}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            <span className="badge badge-id">{stmt.statement_id}</span>
+                          </div>
                         </div>
 
                         <div className="verbatim-block">

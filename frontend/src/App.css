@@ -757,6 +757,34 @@
   margin-bottom: 0.65rem;
 }
 
+.statement-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Quiet delete affordance — only turns hostile on hover */
+.btn-icon-danger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btn-icon-danger:hover {
+  color: var(--accent-rose);
+  background: var(--accent-rose-subtle);
+  border-color: var(--accent-rose-border);
+}
+
 .witness-title {
   font-size: 1.05rem;
   font-weight: 700;

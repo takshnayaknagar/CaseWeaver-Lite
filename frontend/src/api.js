@@ -50,6 +50,13 @@ export async function addStatement(statement) {
   return handleResponse(res);
 }
 
+export async function deleteStatement(statementId) {
+  const res = await fetch(`${API_BASE}/api/case/statements/${encodeURIComponent(statementId)}`, {
+    method: 'DELETE',
+  });
+  return handleResponse(res);
+}
+
 export async function analyzeAll() {
   const res = await fetch(`${API_BASE}/api/analyze/all`, {
     method: 'POST',
