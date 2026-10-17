@@ -1,0 +1,28 @@
+
+{
+  "case_id": "CW-001",
+  "case_name": "The Missing Diamond",
+  "incident_date": "2026-10-15",
+  "statements": [
+    {
+      "statement_id": "S1",
+      "witness_name": "Alex",
+      "text": "I started my security shift at 7:45 PM. At approximately 8:00 PM, I saw Maya near the exhibition room. At 8:15 PM, I saw Daniel leaving the museum. I did not see Ryan that evening."
+    },
+    {
+      "statement_id": "S2",
+      "witness_name": "Maya",
+      "text": "I entered the exhibition room at 7:55 PM and confirmed that the diamond was present. I left at 8:10 PM. I saw Ryan near the storage room at approximately 8:20 PM."
+    },
+    {
+      "statement_id": "S3",
+      "witness_name": "Daniel",
+      "text": "I entered the museum at 8:05 PM. I was looking at the exhibits until approximately 8:25 PM, when I left the building. I did not speak to Alex."
+    },
+    {
+      "statement_id": "S4",
+      "witness_name": "Ryan",
+      "text": "I was repairing a light in the exhibition room from 8:00 PM until 8:30 PM. I saw Maya leave at 8:10 PM. I did not see Daniel inside the exhibition room."
+    }
+  ]
+}
