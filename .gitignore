@@ -6,6 +6,11 @@ __pycache__/
 
 # Virtual environments
 .venv/
+venv/
 
 # Test cache
 .pytest_cache/
+
+# Secrets and environment files
+.streamlit/secrets.toml
+.env
