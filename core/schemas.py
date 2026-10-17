@@ -164,3 +164,68 @@ class Inconsistency(CaseWeaverModel):
         if any(not item for item in self.source_quotes):
             raise ValueError("source_quotes must not contain empty values")
         return self
+
+
+class HeatmapFinding(CaseWeaverModel):
+    """A pairwise discrepancy note. The score is a potential signal, not proof of dishonesty."""
+
+    statement_a_id: str = Field(min_length=1)
+    statement_b_id: str = Field(min_length=1)
+    score: float = Field(ge=0.0, le=1.0)
+    summary: str = Field(min_length=1)
+
+
+class HeatmapResult(CaseWeaverModel):
+    """Square statement-by-statement discrepancy heatmap.
+
+    `scores[i][j]` is a potential discrepancy signal in [0, 1] between
+    `statement_ids[i]` and `statement_ids[j]`. The matrix must be symmetric.
+    A statement compared with itself must have score 0. These scores are not
+    proof of dishonesty and are not credibility scores.
+    """
+
+    statement_ids: list[str] = Field(min_length=1)
+    scores: list[list[float]]
+    findings: list[HeatmapFinding] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_matrix(self) -> "HeatmapResult":
+        ids = self.statement_ids
+        if any(not item for item in ids):
+            raise ValueError("statement_ids must not contain empty values")
+        if len(ids) != len(set(ids)):
+            raise ValueError("statement_ids must be unique")
+
+        n = len(ids)
+        if len(self.scores) != n:
+            raise ValueError(
+                f"scores must be a square matrix of size {n}x{n} to match statement_ids"
+            )
+        for i, row in enumerate(self.scores):
+            if len(row) != n:
+                raise ValueError(
+                    f"scores must be a square matrix of size {n}x{n}; row {i} has length {len(row)}"
+                )
+        for i, row in enumerate(self.scores):
+            for j, value in enumerate(row):
+                if value < 0.0 or value > 1.0:
+                    raise ValueError(
+                        f"scores[{i}][{j}] must be between 0 and 1 inclusive, got {value}"
+                    )
+                if i == j and value != 0.0:
+                    raise ValueError(
+                        f"scores[{i}][{j}] must be 0 for a statement compared with itself"
+                    )
+                if self.scores[j][i] != value:
+                    raise ValueError(
+                        f"scores must be symmetric: scores[{i}][{j}]={value} "
+                        f"!= scores[{j}][{i}]={self.scores[j][i]}"
+                    )
+
+        allowed = set(ids)
+        for finding in self.findings:
+            if finding.statement_a_id not in allowed or finding.statement_b_id not in allowed:
+                raise ValueError(
+                    "heatmap findings must reference statement_ids present on the heatmap"
+                )
+        return self

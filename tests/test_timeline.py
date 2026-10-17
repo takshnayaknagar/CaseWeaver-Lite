@@ -8,19 +8,17 @@ from modules.timeline import (
 )
 
 
-def make_event(event_id, date_value, time_start, quote="At 8:00 PM, I saw Alex."):
+def make_event(event_id, date_value, time_value, quote="At 8:00 PM, I saw Alex."):
     return {
         "event_id": event_id,
         "description": "Witness observed Alex",
         "date": date_value,
-        "time_start": time_start,
-        "time_end": None,
-        "time_precision": "exact" if time_start else "unknown",
+        "time": time_value,
         "people": ["Alex"],
         "location": None,
         "source_statement_id": "S1",
         "source_quote": quote,
-        "confidence": "high",
+        "confidence": 0.9,
     }
 
 
@@ -91,7 +89,15 @@ def test_invalid_what_if_time_is_ignored():
 
     result = sort_events_with_adjustments(events, {"E1": "29:75"})
 
-    assert result[0]["time_start"] == "19:00"
+    assert result[0]["time"] == "19:00"
+
+
+def test_what_if_accepts_canonical_twelve_hour_time():
+    events = [make_event("E1", "2026-10-15", "19:00")]
+
+    result = sort_events_with_adjustments(events, {"E1": "8:30 PM"})
+
+    assert result[0]["time"] == "8:30 PM"
 
 
 def test_quote_must_be_verbatim():
@@ -104,11 +110,33 @@ def test_quote_must_be_verbatim():
     assert validate_event(event, statements) is False
 
 
-def test_unknown_precision_is_allowed():
+def test_unknown_time_is_allowed():
     event = make_event("E1", None, None)
-    event["time_precision"] = "unknown"
 
     assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."})
+
+
+def test_confidence_must_be_numeric_in_range():
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is True
+
+    event["confidence"] = "high"
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is False
+
+    event["confidence"] = 1.5
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is False
+
+    event["confidence"] = None
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is True
+
+
+def test_legacy_time_fields_are_rejected():
+    event = make_event("E1", "2026-10-15", "20:00")
+    assert validate_event(event, {"S1": "At 8:00 PM, I saw Alex."}) is True
+    assert "time_start" not in event
+    assert "time_end" not in event
+    assert "time_precision" not in event
 
 
 def test_invalid_date_is_rejected():
@@ -122,19 +150,210 @@ def test_missing_source_statement_is_rejected():
 
     assert validate_event(event, {}) is False
 
+
+def test_missing_event_id_or_description_is_rejected():
+    statements = {"S1": "At 8:00 PM, I saw Alex."}
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    event["event_id"] = ""
+    assert validate_event(event, statements) is False
+
+    event["event_id"] = "E1"
+    event["description"] = "   "
+    assert validate_event(event, statements) is False
+
+
+def test_missing_quote_is_rejected():
+    statements = {"S1": "At 8:00 PM, I saw Alex."}
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    event["source_quote"] = None
+    assert validate_event(event, statements) is False
+
+    event["source_quote"] = ""
+    assert validate_event(event, statements) is False
+
+
+def test_conflicting_time_in_description_is_rejected():
+    statements = {"S1": "At 8:00 PM, I saw Alex."}
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    event["description"] = "Witness observed Alex at 9:00 PM"
+    assert validate_event(event, statements) is False
+
+
+def test_summary_description_without_conflicting_time_is_accepted():
+    statement = "At 8:00 PM, I saw Alex near the exhibition room."
+    statements = {"S1": statement}
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+
+    # The description summarizes but repeats the same time.
+    event["description"] = "Saw Alex at 8:00 PM near the exhibition room"
+    assert validate_event(event, statements) is True
+
+    # A description with no stated time is a plain summary.
+    event["description"] = "Saw Alex near the exhibition room"
+    assert validate_event(event, statements) is True
+
+    # A quote stating a range is not misjudged against a single stated time.
+    range_statement = "I was repairing a light from 8:00 PM until 8:30 PM."
+    statements_range = {"S1": range_statement}
+    event["description"] = "Repaired a light at 8:10 PM"
+    event["source_quote"] = "from 8:00 PM until 8:30 PM"
+    event["time"] = "20:10"
+    assert validate_event(event, statements_range) is True
+
+
+def test_event_time_matching_quote_is_accepted():
+    statement = "I entered the museum at 8:05 PM."
+    event = make_event("E1", "2026-10-15", "20:05", quote=statement)
+    event["description"] = "Entered the museum"
+
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_event_time_conflicting_with_quote_is_rejected():
+    statement = "I entered the museum at 8:05 PM."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+    event["description"] = "Entered the museum"
+
+    assert validate_event(event, {"S1": statement}) is False
+
+
+def test_event_time_with_range_quote_is_not_compared():
+    range_statement = "I was repairing a light from 8:00 PM until 8:30 PM."
+    event = make_event("E1", "2026-10-15", "20:10", quote="from 8:00 PM until 8:30 PM")
+    event["description"] = "Repaired a light"
+
+    assert validate_event(event, {"S1": range_statement}) is True
+
+
+def test_event_time_with_timeless_quote_is_not_compared():
+    statement = "I entered the museum through the side door."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+    event["description"] = "Entered through the side door"
+
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_description_introducing_unrelated_name_is_rejected():
+    statement = "At 8:00 PM, I saw Maya near the exhibition room."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+
+    event["description"] = "Witness observed Daniel leaving the museum"
+    assert validate_event(event, {"S1": statement}) is False
+
+
+def test_description_summary_reusing_quote_names_is_accepted():
+    statement = "At 8:00 PM, I saw Maya near the exhibition room."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+
+    event["description"] = "Witness observed Maya near the exhibition room"
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_extraction_prompt_requires_description_grounded_in_quote(monkeypatch):
+    from modules.timeline import extract_events
+
+    prompts = []
+
+    def fake_ask_gemma(prompt):
+        prompts.append(prompt)
+        return json.dumps([])
+
+    install_mock_gemma(monkeypatch, fake_ask_gemma)
+
+    extract_events({"statements": [{"statement_id": "S1", "text": "I saw Maya."}]})
+
+    assert prompts, "expected the extraction prompt to be sent"
+    assert "never add people, places, or activities" in prompts[0]
+
+
+def test_iso_datetime_in_time_field_is_rejected():
+    statement = "I entered the museum at 8:05 PM."
+    event = make_event("E1", "2026-10-15", "2026-10-15T20:05:00", quote=statement)
+    event["description"] = "Entered the museum"
+
+    assert validate_event(event, {"S1": statement}) is False
+
+
+def test_malformed_people_values_are_rejected():
+    statement = "At 8:00 PM, I saw Maya near the exhibition room."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+    event["description"] = "Witness observed Maya"
+
+    for bad in ("Maya", None, {"name": "Maya"}, [1, 2], ["Maya", 3]):
+        event["people"] = bad
+        assert validate_event(event, {"S1": statement}) is False, f"people={bad!r}"
+
+    event["people"] = []
+    assert validate_event(event, {"S1": statement}) is True
+
+    event["people"] = ["Maya"]
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_extraction_prompt_states_field_formats(monkeypatch):
+    from modules.timeline import extract_events
+
+    prompts = []
+
+    def fake_ask_gemma(prompt):
+        prompts.append(prompt)
+        return json.dumps([])
+
+    install_mock_gemma(monkeypatch, fake_ask_gemma)
+
+    extract_events({"statements": [{"statement_id": "S1", "text": "I saw Maya."}]})
+
+    assert prompts, "expected the extraction prompt to be sent"
+    prompt = prompts[0]
+    assert "date must be YYYY-MM-DD" in prompt
+    assert "NEVER be an ISO datetime" in prompt
+    assert "ALWAYS be a JSON array of name strings" in prompt
+    assert "exact, verbatim substring of its own source statement" in prompt
+
+
+def test_extract_events_continues_after_invalid_event(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    good_quote = "I entered the museum at 8:05 PM."
+    bad_event = make_gemma_event("S1-1", good_quote)
+    bad_event["description"] = "Entered the museum at 9:00 PM"  # contradicts quote
+    valid_event = make_gemma_event("S2-1", good_quote, event_id="S2-1", time_value="20:05")
+
+    def fake_ask_gemma(prompt):
+        if "First witness statement." in prompt:
+            return json.dumps([bad_event])
+        return json.dumps([valid_event])
+
+    install_mock_gemma(monkeypatch, fake_ask_gemma)
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [
+                {"statement_id": "S1", "text": f"First witness statement. {good_quote}"},
+                {"statement_id": "S2", "text": good_quote},
+            ],
+        })
+
+    assert len(result) == 1
+    assert result[0]["source_statement_id"] == "S2"
+    assert any("conflicts with the source quote" in r.getMessage() for r in caplog.records)
+
 import json
 import sys
 import types
 
 
-def make_gemma_event(statement_id, quote, event_id="S1-E001"):
+def make_gemma_event(statement_id, quote, event_id="S1-E001", time_value="19:45"):
     return {
         "event_id": event_id,
         "description": "Witness starts security shift",
         "date": "2026-10-15",
-        "time_start": "19:45",
-        "time_end": None,
-        "time_precision": "exact",
+        "time": time_value,
         "people": ["Alex"],
         "location": None,
         "source_statement_id": statement_id,
@@ -178,6 +397,11 @@ def test_extract_events_accepts_valid_evidence(monkeypatch):
     assert len(result) == 1
     assert result[0]["source_quote"] == quote
     assert result[0]["source_statement_id"] == "S1"
+    assert result[0]["time"] == "19:45"
+    assert result[0]["confidence"] == 0.9
+    assert "time_start" not in result[0]
+    assert "time_end" not in result[0]
+    assert "time_precision" not in result[0]
 
 
 def test_extract_events_rejects_fabricated_quote(monkeypatch):
@@ -217,6 +441,139 @@ def test_extract_events_handles_invalid_json(monkeypatch):
     assert result == []
 
 
+def test_extract_events_accepts_fenced_json(monkeypatch):
+    from modules.timeline import extract_events
+
+    quote = "I started my shift at 7:45 PM."
+    event = make_gemma_event("S1", quote)
+    fenced = "```json\n" + json.dumps([event]) + "\n```"
+
+    install_mock_gemma(monkeypatch, lambda prompt: fenced)
+
+    result = extract_events({
+        "incident_date": "2026-10-15",
+        "statements": [{"statement_id": "S1", "witness_name": "Alex", "text": quote}],
+    })
+
+    assert len(result) == 1
+    assert result[0]["confidence"] == 0.9
+
+
+def test_extract_events_logs_malformed_json_warning(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    install_mock_gemma(monkeypatch, lambda prompt: "```json\n{oops")
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift."}]
+        })
+
+    assert result == []
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("not valid JSON" in record.getMessage() for record in warnings)
+    # Diagnostics must not leak witness text.
+    assert all("I started my shift" not in record.getMessage() for record in warnings)
+
+
+def test_extract_events_logs_invalid_source_quote(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    event = make_gemma_event("S1", "I saw the suspect.")
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift at 7:45 PM."}]
+        })
+
+    assert result == []
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("rejected by evidence validation" in record.getMessage() for record in warnings)
+    assert any("not a verbatim substring" in record.getMessage() for record in warnings)
+    # The fabricated quote itself must not be echoed into logs.
+    assert all("I saw the suspect" not in record.getMessage() for record in warnings)
+
+
+def test_extract_events_replaces_wrong_model_statement_id(monkeypatch):
+    from modules.timeline import extract_events
+
+    quote = "I started my shift at 7:45 PM."
+    event = make_gemma_event("S1-9", quote)  # model rewrote the statement id
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    result = extract_events({
+        "statements": [{"statement_id": "S1", "text": quote}]
+    })
+
+    assert len(result) == 1
+    assert result[0]["source_statement_id"] == "S1"
+    assert result[0]["source_quote"] == quote
+
+
+def test_extract_events_still_rejects_missing_quote(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    event = make_gemma_event("S1-9", "whatever")  # sid will be replaced...
+    event["source_quote"] = None  # ...but a missing quote must still reject
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift at 7:45 PM."}]
+        })
+
+    assert result == []
+    assert any("missing or empty" in r.getMessage() for r in caplog.records)
+
+
+def test_extract_events_logs_missing_canonical_fields(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    # Missing source_quote and description entirely.
+    event = {"event_id": "E9", "date": None, "time": None, "people": [], "location": None, "confidence": "high"}
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift at 7:45 PM."}]
+        })
+
+    assert result == []
+    assert any("missing or empty" in r.getMessage() for r in caplog.records)
+
+
+def test_extract_events_logs_client_failure(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    def failing_ask_gemma(prompt):
+        raise ConnectionError("Ollama is down")
+
+    install_mock_gemma(monkeypatch, failing_ask_gemma)
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift."}]
+        })
+
+    assert result == []
+    assert any("Gemma request failed" in r.getMessage() for r in caplog.records)
+
+
 
 
 def test_extract_events_continues_after_client_failure(monkeypatch):
@@ -227,7 +584,7 @@ def test_extract_events_continues_after_client_failure(monkeypatch):
         "S2", quote, event_id="S2-E001"
     )
     valid_event["date"] = "2026-10-15"
-    valid_event["time_start"] = "20:05"
+    valid_event["time"] = "20:05"
 
     def fake_ask_gemma(prompt):
         if "First witness statement." in prompt:

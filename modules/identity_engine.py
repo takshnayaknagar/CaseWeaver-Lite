@@ -31,15 +31,14 @@ Never invent people, aliases, relationships, or quotations.
 Aliases are allowed only when a quotation shows they refer to the same person.
 Quotations must be exact contiguous substrings copied from that statement.
 Include each witness as a person even if nobody else names them.
-Return JSON only, with this shape:
+Return JSON only, with this shape (note the flat per-person layout):
 {
   "people": [
     {
       "canonical_name": "Full Name",
       "aliases": ["nickname"],
-      "mentions": [
-        {"statement_id": "s1", "quotations": ["exact quote from that statement"]}
-      ]
+      "statement_id": "s1",
+      "quotations": ["exact quote from that statement"]
     }
   ],
   "relationships": [
@@ -52,7 +51,12 @@ Return JSON only, with this shape:
     }
   ]
 }
+Each person entry is one flat object: use one statement_id and list every
+quotation from that statement. Repeat the person with another statement_id
+if they are mentioned in several statements.
 Use only relationship types observed or spoke_to, and only when the quotation supports them.
+Output strictly valid JSON: no comments, no trailing commas, and every { and [ explicitly closed.
+Keep each mentions object on a single line and keep each quotation to one short sentence.
 If nothing can be extracted, return {"people": [], "relationships": []}.
 """
 
@@ -208,6 +212,65 @@ def _ask_gemma(prompt: str, warnings: list[str]) -> str | None:
     return text
 
 
+_TRAILING_COMMA = re.compile(r",\s*(?=[}\]])")
+_CLOSERS = {"{": "}", "[": "]"}
+
+
+def _salvage_json(blob: str) -> str:
+    """Apply syntax-only repairs that never add, remove, or alter values.
+
+    Strips trailing commas and appends closing brackets for
+    string-literal-aware imbalance. Structural misnesting is never
+    guessed at: if these repairs do not yield valid JSON, parsing fails
+    and the witness-only fallback applies.
+    """
+    repaired = _TRAILING_COMMA.sub("", blob)
+
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in repaired:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in _CLOSERS:
+            stack.append(_CLOSERS[char])
+        elif char in ("}", "]") and stack:
+            stack.pop()
+
+    repaired = _TRAILING_COMMA.sub("", repaired + "".join(reversed(stack)))
+    return _TRAILING_COMMA.sub("", repaired)
+
+
+def _looks_misnested(data: dict[str, Any]) -> bool:
+    """Detect a salvaged candidate whose nesting is provably wrong.
+
+    Balanced-but-misplaced braces can leave a whole person object inside
+    another person's mentions; a mention entry never carries person-level
+    keys such as canonical_name.
+    """
+    people = data.get("people")
+    if not isinstance(people, list):
+        return False
+    for person in people:
+        if not isinstance(person, dict):
+            continue
+        mentions = person.get("mentions")
+        if not isinstance(mentions, list):
+            continue
+        for mention in mentions:
+            if isinstance(mention, dict) and "canonical_name" in mention:
+                return True
+    return False
+
+
 def _parse_model_json(raw: str, warnings: list[str]) -> dict[str, Any] | None:
     candidates = [raw]
     fenced = _JSON_FENCE.search(raw)
@@ -219,16 +282,17 @@ def _parse_model_json(raw: str, warnings: list[str]) -> dict[str, Any] | None:
 
     seen: set[str] = set()
     for blob in candidates:
-        blob = blob.strip()
-        if not blob or blob in seen:
-            continue
-        seen.add(blob)
-        try:
-            data = json.loads(blob)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
+        for variant in (blob, _salvage_json(blob.strip())):
+            variant = variant.strip()
+            if not variant or variant in seen:
+                continue
+            seen.add(variant)
+            try:
+                data = json.loads(variant)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and not _looks_misnested(data):
+                return data
 
     warnings.append("Gemma response was not valid JSON; using witness-only identities.")
     return None
@@ -270,9 +334,16 @@ def _merge_model_people(
             else:
                 warnings.append(f"Dropped unsupported alias {alias!r} for {canonical!r}.")
 
-        mentions = item.get("mentions") or []
+        mentions = item.get("mentions")
         if not isinstance(mentions, list):
-            continue
+            # Flat per-person layout from the prompt: one statement_id with
+            # a quotations list. Nested "mentions" output is still accepted.
+            mentions = [
+                {
+                    "statement_id": _as_str(item.get("statement_id")),
+                    "quotations": item.get("quotations") or [],
+                }
+            ]
         for mention in mentions:
             if not isinstance(mention, dict):
                 continue

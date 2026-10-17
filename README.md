@@ -193,6 +193,31 @@ detect_inconsistencies(case_data: dict) -> dict
 
 All analysis functions accept the complete canonical case dictionary.
 
+Shared validation and hypothetical-analysis helpers:
+
+```python
+from core.analysis import parse_model_json, apply_what_if
+from core.schemas import HeatmapResult, HeatmapFinding
+```
+
+```python
+parse_model_json(text: str) -> dict
+apply_what_if(events: list[dict], time_overrides: dict[str, str]) -> dict
+```
+
+- `parse_model_json` accepts a JSON object (optional markdown fences). Malformed JSON or a non-object (array, string, number) raises a clear error. It never fabricates keys or wraps invalid output.
+- `apply_what_if` deep-copies extracted events and applies hypothetical `Event.time` values keyed by `event_id`. It returns `{"events": [...], "changes": [{"event_id", "field": "time", "previous", "updated"}, ...]}`. Original events, case statements, and source quotations are never mutated. Statement or text overrides are not supported. Events without `event_id` cannot be overridden.
+
+### HeatmapResult schema
+
+`HeatmapResult` is the shared output contract for a statement-by-statement discrepancy heatmap:
+
+- `statement_ids`: ordered unique statement IDs (matrix axis labels)
+- `scores`: square `n x n` symmetric matrix of floats in `[0, 1]`, where `n = len(statement_ids)`
+- `findings`: optional `HeatmapFinding` list (`statement_a_id`, `statement_b_id`, `score`, `summary`)
+
+A statement compared with itself must have score `0` (`scores[i][i] == 0`). Scores are **potential discrepancy signals**, not proof of dishonesty and not credibility scores.
+
 ## Responsible use
 
 - All demonstration cases and statements are fictional.
@@ -223,6 +248,9 @@ All analysis functions accept the complete canonical case dictionary.
 
 **Graphviz rendering failure:** Install the Graphviz system application as well as the Python package.
 
+**Invalid model output:** Treat the analysis as failed or flag invalid findings. Never silently replace real inference with mock results.
+
+**Graphviz rendering failure:** Install the Graphviz system application as well as the Python package.
 ## License
 
 Hackathon prototype. Add a project license before distributing the code publicly.
