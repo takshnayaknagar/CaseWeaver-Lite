@@ -116,6 +116,23 @@ def _rejection_reasons(
             quote = event.get("source_quote")
             if isinstance(quote, str) and quote.strip() and quote not in text:
                 reasons.append("source_quote is not a verbatim substring of the statement")
+            elif isinstance(quote, str) and quote.strip():
+                quote_times = _time_tokens(quote)
+                description_times = _time_tokens(event.get("description") or "")
+                if len(quote_times) == 1 and description_times and description_times != quote_times:
+                    reasons.append(
+                        "description states a time that conflicts with the source quote"
+                    )
+                event_time = event.get("time")
+                if (
+                    len(quote_times) == 1
+                    and isinstance(event_time, str)
+                    and _valid_time(event_time)
+                    and _time_minutes(event_time) not in quote_times
+                ):
+                    reasons.append(
+                        "time field conflicts with the time stated in the source quote"
+                    )
 
     if event.get("date") is not None and not _valid_date(event.get("date")):
         reasons.append(f"date is not YYYY-MM-DD: {event.get('date')!r}")
@@ -144,6 +161,26 @@ def _rejection_reasons(
     return reasons
 
 
+TIME_TOKEN_RE = re.compile(
+    r"(?:(1[0-2]|0?[1-9]):([0-5]\d)\s?(AM|PM)|(2[0-3]|[01]?\d):([0-5]\d))",
+    re.IGNORECASE,
+)
+
+
+def _time_tokens(text: str) -> set[int]:
+    """Return the set of clock times (minutes since midnight) stated in text."""
+    tokens: set[int] = set()
+    for hour_12, minute_12, meridiem, hour_24, minute_24 in TIME_TOKEN_RE.findall(text):
+        if meridiem:
+            hour = int(hour_12) % 12
+            if meridiem.upper() == "PM":
+                hour += 12
+            tokens.add(hour * 60 + int(minute_12))
+        else:
+            tokens.add(int(hour_24) * 60 + int(minute_24))
+    return tokens
+
+
 def validate_event(
     event: dict[str, Any],
     statements_by_id: dict[str, str],
@@ -166,6 +203,22 @@ def validate_event(
     quote = event["source_quote"]
     if not quote.strip() or quote not in original_text:
         return False
+
+    # Reject clear factual contradictions between the description and its
+    # quote. A quote is compared only when it states exactly one time, so
+    # summaries of ranges ("from 8:00 PM until 8:30 PM") are not misjudged.
+    quote_times = _time_tokens(quote)
+    if len(quote_times) == 1:
+        description_times = _time_tokens(event["description"])
+        if description_times and description_times != quote_times:
+            return False
+
+    # The structured time field must agree with an unambiguous single time
+    # stated in the quote. Quotes with multiple or no times are not compared.
+    event_time = event["time"]
+    if len(quote_times) == 1 and event_time is not None and _valid_time(event_time):
+        if _time_minutes(event_time) not in quote_times:
+            return False
 
     if event["date"] is not None and not _valid_date(event["date"]):
         return False

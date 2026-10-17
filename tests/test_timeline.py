@@ -150,17 +150,132 @@ def test_missing_source_statement_is_rejected():
 
     assert validate_event(event, {}) is False
 
+
+def test_missing_event_id_or_description_is_rejected():
+    statements = {"S1": "At 8:00 PM, I saw Alex."}
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    event["event_id"] = ""
+    assert validate_event(event, statements) is False
+
+    event["event_id"] = "E1"
+    event["description"] = "   "
+    assert validate_event(event, statements) is False
+
+
+def test_missing_quote_is_rejected():
+    statements = {"S1": "At 8:00 PM, I saw Alex."}
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    event["source_quote"] = None
+    assert validate_event(event, statements) is False
+
+    event["source_quote"] = ""
+    assert validate_event(event, statements) is False
+
+
+def test_conflicting_time_in_description_is_rejected():
+    statements = {"S1": "At 8:00 PM, I saw Alex."}
+    event = make_event("E1", "2026-10-15", "20:00")
+
+    event["description"] = "Witness observed Alex at 9:00 PM"
+    assert validate_event(event, statements) is False
+
+
+def test_summary_description_without_conflicting_time_is_accepted():
+    statement = "At 8:00 PM, I saw Alex near the exhibition room."
+    statements = {"S1": statement}
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+
+    # The description summarizes but repeats the same time.
+    event["description"] = "Saw Alex at 8:00 PM near the exhibition room"
+    assert validate_event(event, statements) is True
+
+    # A description with no stated time is a plain summary.
+    event["description"] = "Saw Alex near the exhibition room"
+    assert validate_event(event, statements) is True
+
+    # A quote stating a range is not misjudged against a single stated time.
+    range_statement = "I was repairing a light from 8:00 PM until 8:30 PM."
+    statements_range = {"S1": range_statement}
+    event["description"] = "Repaired a light at 8:10 PM"
+    event["source_quote"] = "from 8:00 PM until 8:30 PM"
+    event["time"] = "20:10"
+    assert validate_event(event, statements_range) is True
+
+
+def test_event_time_matching_quote_is_accepted():
+    statement = "I entered the museum at 8:05 PM."
+    event = make_event("E1", "2026-10-15", "20:05", quote=statement)
+    event["description"] = "Entered the museum"
+
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_event_time_conflicting_with_quote_is_rejected():
+    statement = "I entered the museum at 8:05 PM."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+    event["description"] = "Entered the museum"
+
+    assert validate_event(event, {"S1": statement}) is False
+
+
+def test_event_time_with_range_quote_is_not_compared():
+    range_statement = "I was repairing a light from 8:00 PM until 8:30 PM."
+    event = make_event("E1", "2026-10-15", "20:10", quote="from 8:00 PM until 8:30 PM")
+    event["description"] = "Repaired a light"
+
+    assert validate_event(event, {"S1": range_statement}) is True
+
+
+def test_event_time_with_timeless_quote_is_not_compared():
+    statement = "I entered the museum through the side door."
+    event = make_event("E1", "2026-10-15", "20:00", quote=statement)
+    event["description"] = "Entered through the side door"
+
+    assert validate_event(event, {"S1": statement}) is True
+
+
+def test_extract_events_continues_after_invalid_event(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    good_quote = "I entered the museum at 8:05 PM."
+    bad_event = make_gemma_event("S1-1", good_quote)
+    bad_event["description"] = "Entered the museum at 9:00 PM"  # contradicts quote
+    valid_event = make_gemma_event("S2-1", good_quote, event_id="S2-1", time_value="20:05")
+
+    def fake_ask_gemma(prompt):
+        if "First witness statement." in prompt:
+            return json.dumps([bad_event])
+        return json.dumps([valid_event])
+
+    install_mock_gemma(monkeypatch, fake_ask_gemma)
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [
+                {"statement_id": "S1", "text": f"First witness statement. {good_quote}"},
+                {"statement_id": "S2", "text": good_quote},
+            ],
+        })
+
+    assert len(result) == 1
+    assert result[0]["source_statement_id"] == "S2"
+    assert any("conflicts with the source quote" in r.getMessage() for r in caplog.records)
+
 import json
 import sys
 import types
 
 
-def make_gemma_event(statement_id, quote, event_id="S1-E001"):
+def make_gemma_event(statement_id, quote, event_id="S1-E001", time_value="19:45"):
     return {
         "event_id": event_id,
         "description": "Witness starts security shift",
         "date": "2026-10-15",
-        "time": "19:45",
+        "time": time_value,
         "people": ["Alex"],
         "location": None,
         "source_statement_id": statement_id,
