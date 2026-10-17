@@ -307,9 +307,7 @@ def test_extract_events_logs_invalid_source_quote(monkeypatch, caplog):
     assert all("I saw the suspect" not in record.getMessage() for record in warnings)
 
 
-def test_extract_events_logs_wrong_source_statement_id(monkeypatch, caplog):
-    import logging
-
+def test_extract_events_replaces_wrong_model_statement_id(monkeypatch):
     from modules.timeline import extract_events
 
     quote = "I started my shift at 7:45 PM."
@@ -317,13 +315,51 @@ def test_extract_events_logs_wrong_source_statement_id(monkeypatch, caplog):
 
     install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
 
+    result = extract_events({
+        "statements": [{"statement_id": "S1", "text": quote}]
+    })
+
+    assert len(result) == 1
+    assert result[0]["source_statement_id"] == "S1"
+    assert result[0]["source_quote"] == quote
+
+
+def test_extract_events_still_rejects_missing_quote(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    event = make_gemma_event("S1-9", "whatever")  # sid will be replaced...
+    event["source_quote"] = None  # ...but a missing quote must still reject
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
     with caplog.at_level(logging.WARNING, logger="modules.timeline"):
         result = extract_events({
-            "statements": [{"statement_id": "S1", "text": quote}]
+            "statements": [{"statement_id": "S1", "text": "I started my shift at 7:45 PM."}]
         })
 
     assert result == []
-    assert any("does not match the current statement id" in r.getMessage() for r in caplog.records)
+    assert any("missing or empty" in r.getMessage() for r in caplog.records)
+
+
+def test_extract_events_logs_missing_canonical_fields(monkeypatch, caplog):
+    import logging
+
+    from modules.timeline import extract_events
+
+    # Missing source_quote and description entirely.
+    event = {"event_id": "E9", "date": None, "time": None, "people": [], "location": None, "confidence": "high"}
+
+    install_mock_gemma(monkeypatch, lambda prompt: json.dumps([event]))
+
+    with caplog.at_level(logging.WARNING, logger="modules.timeline"):
+        result = extract_events({
+            "statements": [{"statement_id": "S1", "text": "I started my shift at 7:45 PM."}]
+        })
+
+    assert result == []
+    assert any("missing or empty" in r.getMessage() for r in caplog.records)
 
 
 def test_extract_events_logs_client_failure(monkeypatch, caplog):

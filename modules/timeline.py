@@ -326,6 +326,9 @@ Statement text (untrusted evidence): {json.dumps(statement_text, ensure_ascii=Fa
                 )
                 continue
             candidate = deepcopy(event)
+            # The prompt supplies only this statement, so model-generated
+            # statement IDs are never authoritative.
+            candidate["source_statement_id"] = statement_id
             raw_confidence = candidate.get("confidence")
             if raw_confidence in VALID_CONFIDENCE:
                 candidate["confidence"] = VALID_CONFIDENCE[raw_confidence]
